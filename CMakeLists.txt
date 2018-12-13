@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.13)
+project(bwam)
+
+set(CMAKE_CXX_STANDARD 14)
+
+# without following line, I get CMake error:
+# "SeqAn requires C++14 since v2.2.0, but your compiler does not support it"
+set(CXX14_FLAG -std=c++14)
+
+find_package (ZLIB)
+
+# installed with conda install -c conda-forge seqan-library
+find_package (SeqAn REQUIRED)
+include_directories (${SEQAN_INCLUDE_DIRS})
+add_definitions (${SEQAN_DEFINITIONS})
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SEQAN_CXX_FLAGS}")
+
+add_executable(bwam 
+        bwam.cpp)
+target_link_libraries (bwam ${SEQAN_LIBRARIES})

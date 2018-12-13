@@ -1,2 +1,4 @@
 # bwam
-BigWig and BAM utilities
+
+BigWig and BAM utilities.  Staring out by trying SeqAn.
+
