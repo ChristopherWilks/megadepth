@@ -31,6 +31,8 @@ Options:
   --version           Show version.
   --include-softclip  Print a record for soft-clipped bases.
   --include-n         Print mismatch records when mismatched read base is N
+  --no-head           Don't print sequence names and lengths in header
+  --delta             Print POS field as +/- delta from previous
   --echo-sam          Print a SAM record for each aligned read
   --double-count      Allow overlapping ends of PE read to count twice toward
                       coverage
@@ -183,7 +185,8 @@ static void output_from_cigar_mdz(
         vector<tuple<char, int, CharString>>& mdz,
         bool print_qual = false,
         bool include_ss = false,
-        bool include_n_mms = false)
+        bool include_n_mms = false,
+        bool delta = false)
 {
     const IupacString& seq{rec.seq};
     assert(rec.beginPos >= 0);
@@ -309,6 +312,18 @@ static void output_from_cigar(const BamAlignmentRecord& rec) {
     }
 }
 
+static void print_header(BamFileIn& bamFileIn) {
+    typedef FormattedFileContext<BamFileIn, void>::Type TBamContext;
+    
+    TBamContext const & bamContext = context(bamFileIn);
+    
+    for(size_t i = 0; i < length(contigNames(bamContext)); i++) {
+        cout << '@' << i << ','
+                    << contigNames(bamContext)[i] << ','
+                    << contigLengths(bamContext)[i] << endl;
+    }
+}
+
 int main(int argc, const char** argv) {
     std::map<std::string, docopt::value> args
             = docopt::docopt(USAGE,
@@ -336,6 +351,9 @@ int main(int argc, const char** argv) {
             BamHeader header;
             BamFileOut bamFileOut(context(bamFileIn), std::cout, Sam());
             readHeader(header, bamFileIn);
+            if(!args["--no-head"].asBool()) {
+                print_header(bamFileIn);
+            }
             BamAlignmentRecord record;
             vector<tuple<char, int, CharString>> mdzbuf;
             CharString mdz;
