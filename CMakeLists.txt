@@ -12,9 +12,11 @@ find_package (ZLIB)
 # installed with conda install -c conda-forge seqan-library
 find_package (SeqAn REQUIRED)
 include_directories (${SEQAN_INCLUDE_DIRS})
+include_directories (${CMAKE_SOURCE_DIR}/docopt)
 add_definitions (${SEQAN_DEFINITIONS})
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SEQAN_CXX_FLAGS}")
 
 add_executable(bwam 
-        bwam.cpp)
+        bwam.cpp
+        docopt/docopt.cpp)
 target_link_libraries (bwam ${SEQAN_LIBRARIES})
