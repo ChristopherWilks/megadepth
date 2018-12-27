@@ -1,8 +1,8 @@
-# bwam
+# bamcount
 
 BigWig and BAM related utilities.
 
-## `bwam nonref`
+## `bamcount nonref`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
@@ -34,7 +34,7 @@ of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
 
-## `bwam bigwig`
+## `bamcount bigwig`
 
 Convert to bigWig (not implemented).
 
