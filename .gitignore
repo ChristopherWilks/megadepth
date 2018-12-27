@@ -3,3 +3,4 @@ build
 cmake-build-debug
 docopt
 *.zip
+.DS_Store
