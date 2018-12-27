@@ -2,7 +2,19 @@
 
 BigWig and BAM related utilities.
 
-## `bamcount nonref`
+## Build dependencies
+
+```
+conda install -c conda-forge seqan-library
+```
+
+## Compiling
+
+SeqAn uses C++14.
+
+## Subcommands
+
+### `bamcount nonref`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
@@ -34,7 +46,7 @@ of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
 
-## `bamcount bigwig`
+### `bamcount bigwig`
 
 Convert to bigWig (not implemented).
 

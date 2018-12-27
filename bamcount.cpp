@@ -22,9 +22,9 @@ static const char USAGE[] =
 R"(BAM and BigWig utility.
 
 Usage:
-  bwam nonref <bam> [options]
-  bwam bigwig <bam> [options]
-  bwam both <bam> [options]
+  bamcount nonref <bam> [options]
+  bamcount bigwig <bam> [options]
+  bamcount both <bam> [options]
 
 Options:
   -h --help           Show this screen.
@@ -329,7 +329,7 @@ int main(int argc, const char** argv) {
             = docopt::docopt(USAGE,
                              { argv + 1, argv + argc },
                              true,                      // show help if requested
-                             "BWAM 0.1");               // version string
+                             "Bamcount 0.1");               // version string
     
     if(args["nonref"].asBool()) {
         assert(args.find("<bam>") != args.end());
