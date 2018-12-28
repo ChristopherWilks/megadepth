@@ -15,6 +15,7 @@
 #include <seqan/sequence.h>
 #include <seqan/stream.h>
 #include <seqan/bam_io.h>
+#include <seqan/file.h>
 
 #include "docopt/docopt.h"
 
@@ -336,8 +337,9 @@ int main(int argc, const char** argv) {
         std::string bam_arg{args["<bam>"].asString()};
         // Open input file, BamFileIn can read SAM and BAM files.
         BamFileIn bamFileIn;
-        if(!open(bamFileIn, bam_arg.c_str())) {
-            std::cerr << "ERROR: Could not open \"" << bam_arg << "\"" << std::endl;
+        int code = open(bamFileIn, bam_arg.c_str());
+        if(code != 0) {
+            std::cerr << "ERROR: Could not open \"" << bam_arg << "\"; code: " << code << std::endl;
             return 1;
         }
     
