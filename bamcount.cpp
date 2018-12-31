@@ -4,11 +4,9 @@
 
 #include <iostream>
 #include <vector>
-#include <tuple>
 #include <cassert>
 #include <sstream>
 #include <algorithm>
-#include <map>
 #include <string>
 #include <cerrno>
 #include <htslib/sam.h>
@@ -38,15 +36,6 @@ Options:
                       expected
   --print-qual        Print quality values for mismatched bases
 )";
-
-using std::cout;
-using std::cerr;
-using std::endl;
-using std::vector;
-using std::tuple;
-using std::get;
-using std::make_tuple;
-using std::stringstream;
 
 /**
  * Holds an MDZ "operation"
@@ -119,7 +108,7 @@ static void parse_mdz(
             memcpy(ops.back().str, mdz + st, (size_t)(i - st));
             ops.back().str[i - st] = '\0';
         } else {
-            stringstream ss;
+            std::stringstream ss;
             ss << "Unknown MD:Z operation: \"" << mdz[i] << "\"";
             throw std::runtime_error(ss.str());
         }
@@ -223,6 +212,7 @@ static void output_from_cigar_mdz(
 {
     uint8_t *seq = bam_get_seq(rec);
     uint8_t *qual = bam_get_qual(rec);
+    // If QUAL field is *. this array is just a bunch of 255s
     uint32_t *cigar = bam_get_cigar(rec);
     size_t mdzi = 0, seq_off = 0;
     int32_t ref_off = rec->core.pos;
@@ -230,8 +220,8 @@ static void output_from_cigar_mdz(
         int op = bam_cigar_op(cigar[k]);
         int run = bam_cigar_oplen(cigar[k]);
         if((strchr("DNMX=", BAM_CIGAR_STR[op]) != nullptr) && mdzi >= mdz.size()) {
-            stringstream ss;
-            ss << "Found read-consuming CIGAR op after MD:Z had been exhausted" << endl;
+            std::stringstream ss;
+            ss << "Found read-consuming CIGAR op after MD:Z had been exhausted" << std::endl;
             throw std::runtime_error(ss.str());
         }
         if(op == BAM_CMATCH || op == BAM_CDIFF || op == BAM_CEQUAL) {
@@ -246,17 +236,17 @@ static void output_from_cigar_mdz(
                 } else {
                     assert(mdz[mdzi].op == 'X');
                     assert(strlen(mdz[mdzi].str) == run_comb);
-                    uint8_t cread = bam_seqi(seq, seq_off);
+                    int cread = bam_seqi(seq, seq_off);
                     if(!include_n_mms && run_comb == 1 && cread == 'N') {
                         // skip
                     } else {
-                        cout << rec->core.tid << ',' << ref_off << ",X,";
-                        seq_substring(cout, seq, seq_off, run_comb);
+                        std::cout << rec->core.tid << ',' << ref_off << ",X,";
+                        seq_substring(std::cout, seq, seq_off, (size_t)run_comb);
                         if(print_qual) {
-                            cout << ',';
-                            cstr_substring(cout, qual, seq_off, run_comb);
+                            std::cout << ',';
+                            cstr_substring(std::cout, qual, seq_off, (size_t)run_comb);
                         }
-                        cout << endl;
+                        std::cout << std::endl;
                     }
                 }
                 seq_off += run_comb;
@@ -269,13 +259,13 @@ static void output_from_cigar_mdz(
                 }
             }
         } else if(op == BAM_CINS) {
-            cout << rec->core.tid << ',' << ref_off << ",I,";
-            seq_substring(cout, seq, seq_off, run) << endl;
+            std::cout << rec->core.tid << ',' << ref_off << ",I,";
+            seq_substring(std::cout, seq, seq_off, (size_t)run) << std::endl;
             seq_off += run;
         } else if(op == BAM_CSOFT_CLIP) {
             if(include_ss) {
-                cout << rec->core.tid << ',' << ref_off << ",S,";
-                seq_substring(cout, seq, seq_off, run) << endl;
+                std::cout << rec->core.tid << ',' << ref_off << ",S,";
+                seq_substring(std::cout, seq, seq_off, (size_t)run) << std::endl;
                 seq_off += run;
             }
         } else if (op == BAM_CDEL) {
@@ -283,14 +273,14 @@ static void output_from_cigar_mdz(
             assert(run == mdz[mdzi].run);
             assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
-            cout << rec->core.tid << ',' << ref_off << ",D," << run << endl;
+            std::cout << rec->core.tid << ',' << ref_off << ",D," << run << std::endl;
             ref_off += run;
         } else if (op == BAM_CREF_SKIP) {
             ref_off += run;
         } else if (op == BAM_CHARD_CLIP) {
         } else if (op == BAM_CPAD) {
         } else {
-            stringstream ss;
+            std::stringstream ss;
             ss << "No such CIGAR operation as \"" << op << "\"";
             throw std::runtime_error(ss.str());
         }
@@ -312,14 +302,14 @@ static void output_from_cigar(const bam1_t *rec) {
         int run = bam_cigar_oplen(cigar[k]);
         switch(op) {
             case BAM_CDEL: {
-                cout << rec->core.tid << ',' << refpos << ",D," << run << endl;
+                std::cout << rec->core.tid << ',' << refpos << ",D," << run << std::endl;
                 refpos += run;
                 break;
             }
             case BAM_CSOFT_CLIP:
             case BAM_CINS: {
-                cout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                seq_substring(cout, seq, seqpos, run) << endl;
+                std::cout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                seq_substring(std::cout, seq, (size_t)seqpos, (size_t)run) << std::endl;
                 seqpos += run;
                 break;
             }
@@ -337,7 +327,7 @@ static void output_from_cigar(const bam1_t *rec) {
             case 'H':
             case 'P': { break; }
             default: {
-                stringstream ss;
+                std::stringstream ss;
                 ss << "No such CIGAR operation as \"" << op << "\"";
                 throw std::runtime_error(ss.str());
             }
@@ -345,25 +335,11 @@ static void output_from_cigar(const bam1_t *rec) {
     }
 }
 
-static int get_header(const std::string& bam_fn, bam_hdr_t *& hdr) {
-    BGZF *bam_fh = bgzf_open(bam_fn.c_str(), "r");
-    if(!bam_fh) {
-        std::cerr << "Couldn't open " << bam_fn << ": " << strerror(errno) << endl;
-        return 1;
-    }
-    hdr = bam_hdr_read(bam_fh);
-    if(!hdr) {
-        std::cerr << "Couldn't read header from " << bam_fn << ": " << strerror(errno) << endl;
-        return 1;
-    }
-    return 0;
-}
-
 static void print_header(const bam_hdr_t * hdr) {
     for(int32_t i = 0; i < hdr->n_targets; i++) {
-        cout << '@' << i << ','
-             << hdr->target_name[i] << ','
-             << hdr->target_len[i] << endl;
+        std::cout << '@' << i << ','
+                  << hdr->target_name[i] << ','
+                  << hdr->target_len[i] << std::endl;
     }
 }
 
@@ -380,18 +356,20 @@ int main(int argc, const char** argv) {
     
         htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
         if(!bam_fh) {
-            std::cerr << "Couldn't open " << bam_arg << ": " << strerror(errno) << endl;
+            std::cerr << "ERROR: Could not open " << bam_arg << ": "
+                      << strerror(errno) << std::endl;
             return 1;
         }
 
-        const bool print_qual = args["--print-qual"].asBool();
+        bool print_qual = args["--print-qual"].asBool();
         const bool include_ss = args["--include-softclip"].asBool();
         const bool include_n_mms = args["--include-n"].asBool();
 
         size_t recs = 0;
         bam_hdr_t *hdr = sam_hdr_read(bam_fh);
         if(!hdr) {
-            std::cerr << "Couldn't read header for " << bam_arg << std::endl;
+            std::cerr << "ERROR: Could not read header for " << bam_arg
+                      << ": " << strerror(errno) << std::endl;
             return 1;
         }
         if(!args["--no-head"].asBool()) {
@@ -400,11 +378,12 @@ int main(int argc, const char** argv) {
         std::vector<MdzOp> mdzbuf;
         bam1_t *rec = bam_init1();
         if (!rec) {
-            perror(nullptr);
+            std::cerr << "ERROR: Could not initialize BAM object: "
+                      << strerror(errno) << std::endl;
             return 1;
         }
         kstring_t sambuf{ 0, 0, nullptr };
-
+        bool first = true;
         while(sam_read1(bam_fh, hdr, rec) >= 0) {
             recs++;
             bam1_core_t *c = &rec->core;
@@ -418,10 +397,20 @@ int main(int argc, const char** argv) {
                     kstring_out(std::cout, &sambuf);
                     std::cout << std::endl;
                 }
+                if(first) {
+                    if(print_qual) {
+                        uint8_t *qual = bam_get_qual(rec);
+                        if(qual[0] == 255) {
+                            std::cerr << "WARNING: --print-qual specified but quality strings don't seem to be present" << std::endl;
+                            print_qual = false;
+                        }
+                    }
+                    first = false;
+                }
                 const uint8_t *mdz = bam_aux_get(rec, "MD");
                 if(!mdz) {
                     if(args["--require-mdz"].asBool()) {
-                        stringstream ss;
+                        std::stringstream ss;
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
@@ -436,9 +425,9 @@ int main(int argc, const char** argv) {
             }
         }
     
-        cout << "Read " << recs << " records" << endl;
+        std::cout << "Read " << recs << " records" << std::endl;
     } else if(args["bigwig"].asBool()) {
-        cout << "BigWig mode not implemented yet!" << endl;
+        std::cout << "BigWig mode not implemented yet!" << std::endl;
     }
     
     return 0;
