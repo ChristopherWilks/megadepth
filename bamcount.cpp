@@ -10,12 +10,9 @@
 #include <algorithm>
 #include <map>
 #include <string>
-
-#include <seqan/basic.h>
-#include <seqan/sequence.h>
-#include <seqan/stream.h>
-#include <seqan/bam_io.h>
-#include <seqan/file.h>
+#include <cerrno>
+#include <htslib/sam.h>
+#include <htslib/bgzf.h>
 
 #include "docopt/docopt.h"
 
@@ -42,7 +39,6 @@ Options:
   --print-qual        Print quality values for mismatched bases
 )";
 
-using namespace seqan;
 using std::cout;
 using std::cerr;
 using std::endl;
@@ -52,40 +48,76 @@ using std::get;
 using std::make_tuple;
 using std::stringstream;
 
+/**
+ * Holds an MDZ "operation"
+ * op can be 
+ */
+struct MdzOp {
+    char op;
+    int run;
+    char str[1024];
+};
+
+static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
+    for(size_t i = off; i < off + run; i++) {
+        os << seq_nt16_str[bam_seqi(str, i)];
+    }
+    return os;
+}
+
+static inline std::ostream& kstring_out(std::ostream& os, const kstring_t *str) {
+    for(size_t i = 0; i < str->l; i++) {
+        os << str->s[i];
+    }
+    return os;
+}
+
+static inline std::ostream& cstr_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
+    for(size_t i = off; i < off + run; i++) {
+        os << (char)str[i];
+    }
+    return os;
+}
 
 /**
  * Parse given MD:Z extra field into a vector of MD:Z operations.
  */
 static void parse_mdz(
-        const CharString& mdz,
-        vector<tuple<char, int, CharString>>& ops)
+        const uint8_t *mdz,
+        std::vector<MdzOp>& ops)
 {
     int i = 0;
-    const size_t ln = length(mdz);
-    bool saw_d = false;
-    while(i < ln) {
+    size_t mdz_len = strlen((char *)mdz);
+    while(i < mdz_len) {
         if(isdigit(mdz[i])) {
             int run = 0;
-            while(i < ln && isdigit(mdz[i])) {
+            while(i < mdz_len && isdigit(mdz[i])) {
                 run *= 10;
                 run += (int)(mdz[i] - '0');
                 i++;
             }
             if(run > 0) {
-                ops.emplace_back(make_tuple('=', run, CharString("")));
+                ops.emplace_back(MdzOp{'=', run, ""});
+                ops.back().str[0] = '\0';
             }
         } else if(isalpha(mdz[i])) {
-            size_t st = i;
-            while(i < ln && isalpha(mdz[i])) i++;
+            int st = i;
+            while(i < mdz_len && isalpha(mdz[i])) i++;
             assert(i > st);
-            ops.emplace_back(make_tuple('X', i - st, infix(mdz, st, i)));
+            ops.emplace_back(MdzOp{'X', i - st, ""});
+            for(int j = 0; j < i ; j++) {
+                ops.back().str[j] = mdz[st + j];
+            }
+            memcpy(ops.back().str, mdz + st, (size_t)(i - st));
+            ops.back().str[i - st] = '\0';
         } else if(mdz[i] == '^') {
-            saw_d = true;
             i++;
-            size_t st = i;
-            while (i < ln && isalpha(mdz[i])) i++;
+            int st = i;
+            while (i < mdz_len && isalpha(mdz[i])) i++;
             assert(i > st);
-            ops.emplace_back(make_tuple('^', i - st, infix(mdz, st, i)));
+            ops.emplace_back(MdzOp{'^', i - st, ""});
+            memcpy(ops.back().str, mdz + st, (size_t)(i - st));
+            ops.back().str[i - st] = '\0';
         } else {
             stringstream ss;
             ss << "Unknown MD:Z operation: \"" << mdz[i] << "\"";
@@ -182,84 +214,81 @@ static void cigar_mdz_to_stacked(
 #endif
 
 static void output_from_cigar_mdz(
-        const BamAlignmentRecord& rec,
-        vector<tuple<char, int, CharString>>& mdz,
+        const bam1_t *rec,
+        std::vector<MdzOp>& mdz,
         bool print_qual = false,
         bool include_ss = false,
         bool include_n_mms = false,
         bool delta = false)
 {
-    const IupacString& seq{rec.seq};
-    assert(rec.beginPos >= 0);
-    size_t mdzi = 0, seq_off = 0, ref_off = rec.beginPos;
-    for (CigarElement<> e : rec.cigar) {
-        const char &op = e.operation;
-        if((strchr("DNMX=", op) != nullptr) && mdzi >= mdz.size()) {
+    uint8_t *seq = bam_get_seq(rec);
+    uint8_t *qual = bam_get_qual(rec);
+    uint32_t *cigar = bam_get_cigar(rec);
+    size_t mdzi = 0, seq_off = 0;
+    int32_t ref_off = rec->core.pos;
+    for(int k = 0; k < rec->core.n_cigar; k++) {
+        int op = bam_cigar_op(cigar[k]);
+        int run = bam_cigar_oplen(cigar[k]);
+        if((strchr("DNMX=", BAM_CIGAR_STR[op]) != nullptr) && mdzi >= mdz.size()) {
             stringstream ss;
             ss << "Found read-consuming CIGAR op after MD:Z had been exhausted" << endl;
             throw std::runtime_error(ss.str());
         }
-        if (op == 'M' || op == 'X' || op == '=') {
+        if(op == BAM_CMATCH || op == BAM_CDIFF || op == BAM_CEQUAL) {
             // Look for block matches and mismatches in MD:Z string
-            size_t runleft = e.count;
-            while (runleft > 0 && mdzi < mdz.size()) {
-                char mdz_op;
-                size_t mdz_run;
-                CharString mdz_str;
-                std::tie(mdz_op, mdz_run, mdz_str) = mdz[mdzi];
-                size_t run_comb = std::min(runleft, mdz_run);
+            int runleft = run;
+            while(runleft > 0 && mdzi < mdz.size()) {
+                int run_comb = std::min(runleft, mdz[mdzi].run);
                 runleft -= run_comb;
-                assert(mdz_op == 'X' or mdz_op == '=');
-                if (mdz_op == '=') {
+                assert(mdz[mdzi].op == 'X' || mdz[mdzi].op == '=');
+                if(mdz[mdzi].op == '=') {
                     // nop
                 } else {
-                    assert(mdz_op == 'X');
-                    assert(length(mdz_str) == run_comb);
-                    if(!include_n_mms && run_comb == 1 && rec.seq[seq_off] == 'N') {
+                    assert(mdz[mdzi].op == 'X');
+                    assert(strlen(mdz[mdzi].str) == run_comb);
+                    uint8_t cread = bam_seqi(seq, seq_off);
+                    if(!include_n_mms && run_comb == 1 && cread == 'N') {
                         // skip
                     } else {
-                        cout << rec.rID << ',' << ref_off << ",X,"
-                             << infix(rec.seq, seq_off, seq_off + run_comb);
+                        cout << rec->core.tid << ',' << ref_off << ",X,";
+                        seq_substring(cout, seq, seq_off, run_comb);
                         if(print_qual) {
-                            cout << ',' << infix(rec.qual, seq_off, seq_off + run_comb);
+                            cout << ',';
+                            cstr_substring(cout, qual, seq_off, run_comb);
                         }
                         cout << endl;
                     }
                 }
                 seq_off += run_comb;
                 ref_off += run_comb;
-                if (run_comb < mdz_run) {
-                    assert(mdz_op == '=');
-                    get<1>(mdz[mdzi]) -= run_comb;
+                if(run_comb < mdz[mdzi].run) {
+                    assert(mdz[mdzi].op == '=');
+                    mdz[mdzi].run -= run_comb;
                 } else {
                     mdzi++;
                 }
             }
-        } else if(op == 'I') {
-            cout << rec.rID << ',' << ref_off << ",I,"
-                 << infix(rec.seq, seq_off, seq_off + e.count) << endl;
-            seq_off += e.count;
-        } else if(op == 'S') {
+        } else if(op == BAM_CINS) {
+            cout << rec->core.tid << ',' << ref_off << ",I,";
+            seq_substring(cout, seq, seq_off, run) << endl;
+            seq_off += run;
+        } else if(op == BAM_CSOFT_CLIP) {
             if(include_ss) {
-                cout << rec.rID << ',' << ref_off << ",S,"
-                     << infix(rec.seq, seq_off, seq_off + e.count) << endl;
-                seq_off += e.count;
+                cout << rec->core.tid << ',' << ref_off << ",S,";
+                seq_substring(cout, seq, seq_off, run) << endl;
+                seq_off += run;
             }
-        } else if (op == 'D') {
-            char mdz_op;
-            size_t mdz_run;
-            CharString mdz_str;
-            std::tie(mdz_op, mdz_run, mdz_str) = mdz[mdzi];
-            assert(mdz_op == '^');
-            assert(e.count == mdz_run);
-            assert(length(mdz_str) == e.count);
+        } else if (op == BAM_CDEL) {
+            assert(mdz[mdzi].op == '^');
+            assert(run == mdz[mdzi].run);
+            assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
-            cout << rec.rID << ',' << ref_off << ",D," << e.count << endl;
-            ref_off += e.count;
-        } else if (op == 'N') {
-            ref_off += e.count;
-        } else if (op == 'H') {
-        } else if (op == 'P') {
+            cout << rec->core.tid << ',' << ref_off << ",D," << run << endl;
+            ref_off += run;
+        } else if (op == BAM_CREF_SKIP) {
+            ref_off += run;
+        } else if (op == BAM_CHARD_CLIP) {
+        } else if (op == BAM_CPAD) {
         } else {
             stringstream ss;
             ss << "No such CIGAR operation as \"" << op << "\"";
@@ -269,59 +298,72 @@ static void output_from_cigar_mdz(
     assert(mdzi == mdz.size());
 }
 
-static void output_from_cigar(const BamAlignmentRecord& rec) {
-    bool simple_cigar = length(rec.cigar) == 1;
-    assert(!simple_cigar || rec.cigar[0].operation == 'M');
-    if(simple_cigar) {
+static void output_from_cigar(const bam1_t *rec) {
+    uint8_t *seq = bam_get_seq(rec);
+    uint32_t *cigar = bam_get_cigar(rec);
+    uint32_t n_cigar = rec->core.n_cigar;
+    if(n_cigar == 1) {
         return;
     }
-    int32_t refpos = rec.beginPos;
+    int32_t refpos = rec->core.pos;
     int32_t seqpos = 0;
-    for(CigarElement<> e : rec.cigar) {
-        switch(e.operation) {
-            case 'D': {
-                cout << rec.rID << ',' << refpos << ",D," << e.count << endl;
-                refpos += e.count;
+    for(uint32_t k = 0; k < n_cigar; k++) {
+        int op = bam_cigar_op(cigar[k]);
+        int run = bam_cigar_oplen(cigar[k]);
+        switch(op) {
+            case BAM_CDEL: {
+                cout << rec->core.tid << ',' << refpos << ",D," << run << endl;
+                refpos += run;
                 break;
             }
-            case 'S':
-            case 'I': {
-                cout << rec.rID << ',' << refpos << ',' << e.operation
-                     << ',' << infix(rec.seq, seqpos, seqpos+e.count) << endl;
-                seqpos += e.count;
+            case BAM_CSOFT_CLIP:
+            case BAM_CINS: {
+                cout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                seq_substring(cout, seq, seqpos, run) << endl;
+                seqpos += run;
                 break;
             }
-            case 'N': {
-                refpos += e.count;
+            case BAM_CREF_SKIP: {
+                refpos += run;
                 break;
             }
-            case 'M':
-            case 'X':
-            case '=': {
-                seqpos += e.count;
-                refpos += e.count;
+            case BAM_CMATCH:
+            case BAM_CDIFF:
+            case BAM_CEQUAL: {
+                seqpos += run;
+                refpos += run;
                 break;
             }
             case 'H':
             case 'P': { break; }
             default: {
                 stringstream ss;
-                ss << "No such CIGAR operation as \"" << e.operation << "\"";
+                ss << "No such CIGAR operation as \"" << op << "\"";
                 throw std::runtime_error(ss.str());
             }
         }
     }
 }
 
-static void print_header(BamFileIn& bamFileIn) {
-    typedef FormattedFileContext<BamFileIn, void>::Type TBamContext;
-    
-    TBamContext const & bamContext = context(bamFileIn);
-    
-    for(size_t i = 0; i < length(contigNames(bamContext)); i++) {
+static int get_header(const std::string& bam_fn, bam_hdr_t *& hdr) {
+    BGZF *bam_fh = bgzf_open(bam_fn.c_str(), "r");
+    if(!bam_fh) {
+        std::cerr << "Couldn't open " << bam_fn << ": " << strerror(errno) << endl;
+        return 1;
+    }
+    hdr = bam_hdr_read(bam_fh);
+    if(!hdr) {
+        std::cerr << "Couldn't read header from " << bam_fn << ": " << strerror(errno) << endl;
+        return 1;
+    }
+    return 0;
+}
+
+static void print_header(const bam_hdr_t * hdr) {
+    for(int32_t i = 0; i < hdr->n_targets; i++) {
         cout << '@' << i << ','
-                    << contigNames(bamContext)[i] << ','
-                    << contigLengths(bamContext)[i] << endl;
+             << hdr->target_name[i] << ','
+             << hdr->target_len[i] << endl;
     }
 }
 
@@ -335,62 +377,63 @@ int main(int argc, const char** argv) {
     if(args["nonref"].asBool()) {
         assert(args.find("<bam>") != args.end());
         std::string bam_arg{args["<bam>"].asString()};
-        // Open input file, BamFileIn can read SAM and BAM files.
-        BamFileIn bamFileIn;
-        int code = open(bamFileIn, bam_arg.c_str());
-        if(code != 0) {
-            std::cerr << "ERROR: Could not open \"" << bam_arg << "\"; code: " << code << std::endl;
+    
+        htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
+        if(!bam_fh) {
+            std::cerr << "Couldn't open " << bam_arg << ": " << strerror(errno) << endl;
             return 1;
         }
-    
-        BamFileOut bamFileOut(context(bamFileIn), std::cout, Sam());
-    
+
         const bool print_qual = args["--print-qual"].asBool();
         const bool include_ss = args["--include-softclip"].asBool();
         const bool include_n_mms = args["--include-n"].asBool();
+
         size_t recs = 0;
-        try {
-            BamHeader header;
-            BamFileOut bamFileOut(context(bamFileIn), std::cout, Sam());
-            readHeader(header, bamFileIn);
-            if(!args["--no-head"].asBool()) {
-                print_header(bamFileIn);
-            }
-            BamAlignmentRecord record;
-            vector<tuple<char, int, CharString>> mdzbuf;
-            CharString mdz;
-            while(!atEnd(bamFileIn)) {
-                readRecord(record, bamFileIn);
-                recs++;
-                bool had_d = false;
-                if(!hasFlagUnmapped(record)) {
-                    if(args["--echo-sam"].asBool()) {
-                        writeRecord(bamFileOut, record);
+        bam_hdr_t *hdr = sam_hdr_read(bam_fh);
+        if(!hdr) {
+            std::cerr << "Couldn't read header for " << bam_arg << std::endl;
+            return 1;
+        }
+        if(!args["--no-head"].asBool()) {
+            print_header(hdr);
+        }
+        std::vector<MdzOp> mdzbuf;
+        bam1_t *rec = bam_init1();
+        if (!rec) {
+            perror(nullptr);
+            return 1;
+        }
+        kstring_t sambuf{ 0, 0, nullptr };
+
+        while(sam_read1(bam_fh, hdr, rec) >= 0) {
+            recs++;
+            bam1_core_t *c = &rec->core;
+            if((c->flag & BAM_FUNMAP) == 0) {
+                if(args["--echo-sam"].asBool()) {
+                    int ret = sam_format1(hdr, rec, &sambuf);
+                    if(ret < 0) {
+                        std::cerr << "Could not format SAM record: " << strerror(errno) << std::endl;
+                        return 1;
                     }
-                    unsigned tagIdx = 0;
-                    BamTagsDict tagsDict(record.tags);
-                    if(!findTagKey(tagIdx, tagsDict, "MD")) {
-                        if(args["--require-mdz"].asBool()) {
-                            stringstream ss;
-                            ss << "No MD:Z extra field for aligned read \"" << record.qName << "\"";
-                            throw std::runtime_error(ss.str());
-                        }
-                        output_from_cigar(record); // just use CIGAR
-                    } else {
-                        clear(mdz);
-                        extractTagValue(mdz, tagsDict, tagIdx);
-                        mdzbuf.clear();
-                        parse_mdz(mdz, mdzbuf);
-                        output_from_cigar_mdz(
-                                record, mdzbuf, print_qual,
-                                include_ss, include_n_mms); // use CIGAR and MD:Z
+                    kstring_out(std::cout, &sambuf);
+                    std::cout << std::endl;
+                }
+                const uint8_t *mdz = bam_aux_get(rec, "MD");
+                if(!mdz) {
+                    if(args["--require-mdz"].asBool()) {
+                        stringstream ss;
+                        ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
+                        throw std::runtime_error(ss.str());
                     }
+                    output_from_cigar(rec); // just use CIGAR
+                } else {
+                    mdzbuf.clear();
+                    parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
+                    output_from_cigar_mdz(
+                            rec, mdzbuf, print_qual,
+                            include_ss, include_n_mms); // use CIGAR and MD:Z
                 }
             }
-        }
-        catch (Exception const & e) {
-            cout << "ERROR: " << e.what() << endl;
-            return 1;
         }
     
         cout << "Read " << recs << " records" << endl;
