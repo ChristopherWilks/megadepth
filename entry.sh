@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 
-set -ex
+set -e
 
 if [[ ! -d /code ]] ; then
     echo "Must mount bamcount directory at /code inside container"
 fi 
 cd /code
+
+./get_htslib.sh
+
+set -x
 
 DR=build-release-temp
 mkdir -p ${DR}
