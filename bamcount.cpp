@@ -9,33 +9,45 @@
 #include <algorithm>
 #include <string>
 #include <cerrno>
+#include <cstring>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 
-#include "docopt/docopt.h"
+static const char USAGE[] = "BAM and BigWig utility.\n"
+    "\n"
+    "Usage:\n"
+    "  bamcount <bam> [options]\n"
+    "\n"
+    "Options:\n"
+    "  -h --help           Show this screen.\n"
+    "  --version           Show version.\n"
+    "  --include-softclip  Print a record for soft-clipped bases.\n"
+    "  --include-n         Print mismatch records when mismatched read base is N\n"
+    "  --no-head           Don't print sequence names and lengths in header\n"
+    "  --delta             Print POS field as +/- delta from previous\n"
+    "  --echo-sam          Print a SAM record for each aligned read\n"
+    "  --double-count      Allow overlapping ends of PE read to count twice toward\n"
+    "                      coverage\n"
+    "  --require-mdz       Quit with error unless MD:Z field exists everywhere it's\n"
+    "                      expected\n"
+    "  --print-qual        Print quality values for mismatched bases\n"
+    "\n";
 
-static const char USAGE[] =
-R"(BAM and BigWig utility.
+static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
+    size_t i = 0;
+    for(const char **itr = begin; itr != end; itr++) {
+        if((*itr)[0] != '-') {
+            if(i++ == n) {
+                return *itr;
+            }
+        }
+    }
+    return nullptr;
+}
 
-Usage:
-  bamcount nonref <bam> [options]
-  bamcount bigwig <bam> [options]
-  bamcount both <bam> [options]
-
-Options:
-  -h --help           Show this screen.
-  --version           Show version.
-  --include-softclip  Print a record for soft-clipped bases.
-  --include-n         Print mismatch records when mismatched read base is N
-  --no-head           Don't print sequence names and lengths in header
-  --delta             Print POS field as +/- delta from previous
-  --echo-sam          Print a SAM record for each aligned read
-  --double-count      Allow overlapping ends of PE read to count twice toward
-                      coverage
-  --require-mdz       Quit with error unless MD:Z field exists everywhere it's
-                      expected
-  --print-qual        Print quality values for mismatched bases
-)";
+static bool has_option(const char** begin, const char** end, const std::string& option) {
+    return std::find(begin, end, option) != end;
+}
 
 /**
  * Holds an MDZ "operation"
@@ -97,7 +109,7 @@ static void parse_mdz(
             for(int j = 0; j < i ; j++) {
                 ops.back().str[j] = mdz[st + j];
             }
-            memcpy(ops.back().str, mdz + st, (size_t)(i - st));
+            std::memcpy(ops.back().str, mdz + st, (size_t)(i - st));
             ops.back().str[i - st] = '\0';
         } else if(mdz[i] == '^') {
             i++;
@@ -105,7 +117,7 @@ static void parse_mdz(
             while (i < mdz_len && isalpha(mdz[i])) i++;
             assert(i > st);
             ops.emplace_back(MdzOp{'^', i - st, ""});
-            memcpy(ops.back().str, mdz + st, (size_t)(i - st));
+            std::memcpy(ops.back().str, mdz + st, (size_t)(i - st));
             ops.back().str[i - st] = '\0';
         } else {
             std::stringstream ss;
@@ -344,91 +356,83 @@ static void print_header(const bam_hdr_t * hdr) {
 }
 
 int main(int argc, const char** argv) {
-    std::map<std::string, docopt::value> args
-            = docopt::docopt(USAGE,
-                             { argv + 1, argv + argc },
-                             true,                      // show help if requested
-                             "Bamcount 0.1");               // version string
-    
-    if(args["nonref"].asBool()) {
-        assert(args.find("<bam>") != args.end());
-        std::string bam_arg{args["<bam>"].asString()};
-    
-        htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
-        if(!bam_fh) {
-            std::cerr << "ERROR: Could not open " << bam_arg << ": "
-                      << strerror(errno) << std::endl;
-            return 1;
-        }
+    const char *bam_arg_c_str = get_positional_n(argv, argv+argc, 0);
+    if(!bam_arg_c_str) {
+        std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
+        return 1;
+    }
+    std::string bam_arg{bam_arg_c_str};
 
-        bool print_qual = args["--print-qual"].asBool();
-        const bool include_ss = args["--include-softclip"].asBool();
-        const bool include_n_mms = args["--include-n"].asBool();
+    htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
+    if(!bam_fh) {
+        std::cerr << "ERROR: Could not open " << bam_arg << ": "
+                  << std::strerror(errno) << std::endl;
+        return 1;
+    }
 
-        size_t recs = 0;
-        bam_hdr_t *hdr = sam_hdr_read(bam_fh);
-        if(!hdr) {
-            std::cerr << "ERROR: Could not read header for " << bam_arg
-                      << ": " << strerror(errno) << std::endl;
-            return 1;
-        }
-        if(!args["--no-head"].asBool()) {
-            print_header(hdr);
-        }
-        std::vector<MdzOp> mdzbuf;
-        bam1_t *rec = bam_init1();
-        if (!rec) {
-            std::cerr << "ERROR: Could not initialize BAM object: "
-                      << strerror(errno) << std::endl;
-            return 1;
-        }
-        kstring_t sambuf{ 0, 0, nullptr };
-        bool first = true;
-        while(sam_read1(bam_fh, hdr, rec) >= 0) {
-            recs++;
-            bam1_core_t *c = &rec->core;
-            if((c->flag & BAM_FUNMAP) == 0) {
-                if(args["--echo-sam"].asBool()) {
-                    int ret = sam_format1(hdr, rec, &sambuf);
-                    if(ret < 0) {
-                        std::cerr << "Could not format SAM record: " << strerror(errno) << std::endl;
-                        return 1;
-                    }
-                    kstring_out(std::cout, &sambuf);
-                    std::cout << std::endl;
+    bool print_qual = has_option(argv, argv+argc, "--print-qual");
+    const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
+    const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
+
+    size_t recs = 0;
+    bam_hdr_t *hdr = sam_hdr_read(bam_fh);
+    if(!hdr) {
+        std::cerr << "ERROR: Could not read header for " << bam_arg
+                  << ": " << std::strerror(errno) << std::endl;
+        return 1;
+    }
+    if(!has_option(argv, argv+argc, "--no-head")) {
+        print_header(hdr);
+    }
+    std::vector<MdzOp> mdzbuf;
+    bam1_t *rec = bam_init1();
+    if (!rec) {
+        std::cerr << "ERROR: Could not initialize BAM object: "
+                  << std::strerror(errno) << std::endl;
+        return 1;
+    }
+    kstring_t sambuf{ 0, 0, nullptr };
+    bool first = true;
+    while(sam_read1(bam_fh, hdr, rec) >= 0) {
+        recs++;
+        bam1_core_t *c = &rec->core;
+        if((c->flag & BAM_FUNMAP) == 0) {
+            if(has_option(argv, argv+argc, "--echo-sam")) {
+                int ret = sam_format1(hdr, rec, &sambuf);
+                if(ret < 0) {
+                    std::cerr << "Could not format SAM record: " << std::strerror(errno) << std::endl;
+                    return 1;
                 }
-                if(first) {
-                    if(print_qual) {
-                        uint8_t *qual = bam_get_qual(rec);
-                        if(qual[0] == 255) {
-                            std::cerr << "WARNING: --print-qual specified but quality strings don't seem to be present" << std::endl;
-                            print_qual = false;
-                        }
+                kstring_out(std::cout, &sambuf);
+                std::cout << std::endl;
+            }
+            if(first) {
+                if(print_qual) {
+                    uint8_t *qual = bam_get_qual(rec);
+                    if(qual[0] == 255) {
+                        std::cerr << "WARNING: --print-qual specified but quality strings don't seem to be present" << std::endl;
+                        print_qual = false;
                     }
-                    first = false;
                 }
-                const uint8_t *mdz = bam_aux_get(rec, "MD");
-                if(!mdz) {
-                    if(args["--require-mdz"].asBool()) {
-                        std::stringstream ss;
-                        ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
-                        throw std::runtime_error(ss.str());
-                    }
-                    output_from_cigar(rec); // just use CIGAR
-                } else {
-                    mdzbuf.clear();
-                    parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
-                    output_from_cigar_mdz(
-                            rec, mdzbuf, print_qual,
-                            include_ss, include_n_mms); // use CIGAR and MD:Z
+                first = false;
+            }
+            const uint8_t *mdz = bam_aux_get(rec, "MD");
+            if(!mdz) {
+                if(has_option(argv, argv+argc, "--require-mdz")) {
+                    std::stringstream ss;
+                    ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
+                    throw std::runtime_error(ss.str());
                 }
+                output_from_cigar(rec); // just use CIGAR
+            } else {
+                mdzbuf.clear();
+                parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
+                output_from_cigar_mdz(
+                        rec, mdzbuf, print_qual,
+                        include_ss, include_n_mms); // use CIGAR and MD:Z
             }
         }
-    
-        std::cout << "Read " << recs << " records" << std::endl;
-    } else if(args["bigwig"].asBool()) {
-        std::cout << "BigWig mode not implemented yet!" << std::endl;
     }
-    
+    std::cout << "Read " << recs << " records" << std::endl;
     return 0;
 }
