@@ -4,8 +4,8 @@ set -ex
 
 VER=1.9
 AR=htslib-${VER}.tar.bz2
-wget https://github.com/samtools/htslib/releases/download/${VER}/${AR}
-tar jxvf ${AR}
+curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${AR}
+bzip2 -dc ${AR} | tar xvf - 
 rm -f ${AR}
 pushd htslib-${VER}
 autoheader
