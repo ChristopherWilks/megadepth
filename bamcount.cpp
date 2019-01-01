@@ -356,14 +356,15 @@ static void print_header(const bam_hdr_t * hdr) {
 }
 
 int main(int argc, const char** argv) {
-    const char *bam_arg_c_str = get_positional_n(argv, argv+argc, 0);
-    if(!bam_arg_c_str) {
+    argv++; argc--;  // skip binary name
+    const char *bam_arg = get_positional_n(argv, argv+argc, 0);
+    if(!bam_arg) {
         std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
         return 1;
     }
-    std::string bam_arg{bam_arg_c_str};
+    std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
 
-    htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
+    htsFile *bam_fh = sam_open(bam_arg, "r");
     if(!bam_fh) {
         std::cerr << "ERROR: Could not open " << bam_arg << ": "
                   << std::strerror(errno) << std::endl;
@@ -386,7 +387,7 @@ int main(int argc, const char** argv) {
     }
     std::vector<MdzOp> mdzbuf;
     bam1_t *rec = bam_init1();
-    if (!rec) {
+    if(!rec) {
         std::cerr << "ERROR: Could not initialize BAM object: "
                   << std::strerror(errno) << std::endl;
         return 1;
