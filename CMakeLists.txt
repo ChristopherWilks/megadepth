@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 2.6)
 project(bamcount)
 set(CMAKE_CXX_STANDARD 11)
-add_executable(bamcount bamcount.cpp docopt/docopt.cpp)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+add_executable(bamcount bamcount.cpp)
+include_directories(htslib)
+
+find_package(Threads REQUIRED)
+if(THREADS_HAVE_PTHREAD_ARG)
+    set_property(TARGET bamcount PROPERTY COMPILE_OPTIONS "-pthread")
+    set_property(TARGET bamcount PROPERTY INTERFACE_COMPILE_OPTIONS "-pthread")
+endif()
+if(CMAKE_THREAD_LIBS_INIT)
+    target_link_libraries(bamcount "${CMAKE_THREAD_LIBS_INIT}")
+endif()
+
 target_link_libraries(bamcount z ${CMAKE_SOURCE_DIR}/htslib/libhts.a)
