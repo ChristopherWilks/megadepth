@@ -356,6 +356,15 @@ static void print_header(const bam_hdr_t * hdr) {
     }
 }
 
+static long get_longest_target_size(const bam_hdr_t * hdr) {
+    long max = 0;
+    for(int32_t i = 0; i < hdr->n_targets; i++) {
+        if(hdr->target_len[i] > max)
+            max = hdr->target_len[i];
+    }
+    return max;
+}
+
 static void reset_array(uint32_t* arr, const long arr_sz) {
     for(long i = 0; i < arr_sz; i++)
         arr[i] = 0;
@@ -431,13 +440,17 @@ int main(int argc, const char** argv) {
     }
     kstring_t sambuf{ 0, 0, nullptr };
     bool first = true;
+    //TODO: fix this by reading the largest reference contig from header
+    //and using that as size
     //largest human chromosome is ~249M bases
-    long chr_size = 250000000;
+    //long chr_size = 250000000;
+    long chr_size;
     char prefix[50]="";
     int32_t ptid = -1;
     uint32_t* starts;
     uint32_t* ends;
     if(has_option(argv, argv+argc, "--read-ends")) {
+        chr_size = get_longest_target_size(hdr);
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
     }
@@ -452,10 +465,8 @@ int main(int argc, const char** argv) {
             if(has_option(argv, argv+argc, "--read-ends")) {
                 int32_t refpos = rec->core.pos;
                 int32_t tid = rec->core.tid;
-                if(tid != ptid)
-                {
-                    if(ptid != -1)
-                    {
+                if(tid != ptid) {
+                    if(ptid != -1) {
                         sprintf(prefix, "start\t%d", ptid);
                         print_array_nonzeros(prefix, starts, chr_size);
                         sprintf(prefix, "end\t%d", ptid);
@@ -507,8 +518,7 @@ int main(int argc, const char** argv) {
         }
     }
     if(has_option(argv, argv+argc, "--read-ends")) {
-        if(ptid != -1)
-        {
+        if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
             print_array_nonzeros(prefix, starts, chr_size);
             sprintf(prefix, "end\t%d", ptid);
