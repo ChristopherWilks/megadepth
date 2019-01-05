@@ -31,6 +31,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --require-mdz       Quit with error unless MD:Z field exists everywhere it's\n"
     "                      expected\n"
     "  --print-qual        Print quality values for mismatched bases\n"
+    "  --read-ends         Print counts of read starts/ends\n"
     "\n";
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -355,8 +356,45 @@ static void print_header(const bam_hdr_t * hdr) {
     }
 }
 
+static void reset_array(uint32_t* arr, const long arr_sz) {
+    for(long i = 0; i < arr_sz; i++)
+        arr[i] = 0;
+}
+
+static void print_array_nonzeros(const char* prefix, 
+                const uint32_t* arr, const long arr_sz) {
+    for(long i = 0; i < arr_sz; i++) {
+        if(arr[i] > 0)
+            std::cout << prefix << '\t' 
+                      << i+1 << '\t' 
+                      << arr[i] << '\n';
+    }
+}
+
+static uint32_t align_length(const bam1_t *rec)
+{
+    uint32_t *cigar = bam_get_cigar(rec);
+    uint32_t n_cigar = rec->core.n_cigar;
+    uint32_t algn_len = 0;
+    for(uint32_t k = 0; k < n_cigar; k++) {
+        int op = bam_cigar_op(cigar[k]);
+        int run = bam_cigar_oplen(cigar[k]);
+        switch(op) {
+            case BAM_CMATCH: 
+            case BAM_CDEL: 
+            case BAM_CREF_SKIP:
+            case BAM_CEQUAL:
+            case BAM_CDIFF:
+                algn_len += run;
+       }
+    }
+    return algn_len;
+}
+        
+
 int main(int argc, const char** argv) {
-    const char *bam_arg_c_str = get_positional_n(argv, argv+argc, 0);
+    const char** argv_ptr = argv;
+    const char *bam_arg_c_str = get_positional_n(++argv_ptr, argv+argc, 0);
     if(!bam_arg_c_str) {
         std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
         return 1;
@@ -393,10 +431,45 @@ int main(int argc, const char** argv) {
     }
     kstring_t sambuf{ 0, 0, nullptr };
     bool first = true;
+    //largest human chromosome is ~249M bases
+    long chr_size = 250000000;
+    char prefix[50]="";
+    int32_t ptid = -1;
+    uint32_t* starts;
+    uint32_t* ends;
+    if(has_option(argv, argv+argc, "--read-ends")) {
+        starts = new uint32_t[chr_size];
+        ends = new uint32_t[chr_size];
+    }
+
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
         if((c->flag & BAM_FUNMAP) == 0) {
+            //TODO track fragment lengths
+
+            //track read starts/ends
+            if(has_option(argv, argv+argc, "--read-ends")) {
+                int32_t refpos = rec->core.pos;
+                int32_t tid = rec->core.tid;
+                if(tid != ptid)
+                {
+                    if(ptid != -1)
+                    {
+                        sprintf(prefix, "start\t%d", ptid);
+                        print_array_nonzeros(prefix, starts, chr_size);
+                        sprintf(prefix, "end\t%d", ptid);
+                        print_array_nonzeros(prefix, ends, chr_size);
+                    }
+                    reset_array(starts, chr_size);
+                    reset_array(ends, chr_size);
+                }
+                ptid = tid;
+                starts[refpos]++;
+                int32_t end_refpos = refpos + align_length(rec) - 1;
+                ends[end_refpos]++;
+            }
+
             if(has_option(argv, argv+argc, "--echo-sam")) {
                 int ret = sam_format1(hdr, rec, &sambuf);
                 if(ret < 0) {
@@ -432,6 +505,17 @@ int main(int argc, const char** argv) {
                         include_ss, include_n_mms); // use CIGAR and MD:Z
             }
         }
+    }
+    if(has_option(argv, argv+argc, "--read-ends")) {
+        if(ptid != -1)
+        {
+            sprintf(prefix, "start\t%d", ptid);
+            print_array_nonzeros(prefix, starts, chr_size);
+            sprintf(prefix, "end\t%d", ptid);
+            print_array_nonzeros(prefix, ends, chr_size);
+        }
+        delete starts;
+        delete ends;
     }
     std::cout << "Read " << recs << " records" << std::endl;
     return 0;
