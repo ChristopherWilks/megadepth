@@ -357,6 +357,12 @@ static void print_header(const bam_hdr_t * hdr) {
 
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
+    
+    if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
+        std::cout << USAGE << std::endl;
+        return 0;
+    }
+    
     const char *bam_arg = get_positional_n(argv, argv+argc, 0);
     if(!bam_arg) {
         std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
