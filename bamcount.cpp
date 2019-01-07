@@ -10,6 +10,7 @@
 #include <string>
 #include <cerrno>
 #include <cstring>
+#include <unordered_map>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 
@@ -21,17 +22,19 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "Options:\n"
     "  -h --help           Show this screen.\n"
     "  --version           Show version.\n"
-    "  --include-softclip  Print a record for soft-clipped bases.\n"
-    "  --include-n         Print mismatch records when mismatched read base is N\n"
+    "  --read-ends         Print counts of read starts/ends\n"
+    "  --coverage          Print per-base coverage (slow but totally worth it)\n"
+    "  --alts              Print differing from ref per-base coverages\n"
+    "   --include-softclip  Print a record for soft-clipped bases\n"
+    "   --include-n         Print mismatch records when mismatched read base is N\n"
+    "   --print-qual        Print quality values for mismatched bases\n"
+    "   --delta             Print POS field as +/- delta from previous\n"
+    "   --require-mdz       Quit with error unless MD:Z field exists everywhere it's\n"
+    "                       expected\n"
     "  --no-head           Don't print sequence names and lengths in header\n"
-    "  --delta             Print POS field as +/- delta from previous\n"
     "  --echo-sam          Print a SAM record for each aligned read\n"
     "  --double-count      Allow overlapping ends of PE read to count twice toward\n"
     "                      coverage\n"
-    "  --require-mdz       Quit with error unless MD:Z field exists everywhere it's\n"
-    "                      expected\n"
-    "  --print-qual        Print quality values for mismatched bases\n"
-    "  --read-ends         Print counts of read starts/ends\n"
     "\n";
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -403,7 +406,8 @@ static int32_t align_length(const bam1_t *rec)
     return algn_len;*/
 }
 
-static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
+static int32_t coverage(const bam1_t *rec, uint32_t* coverages, 
+                        std::unordered_map<std::string, int> overlapping_mates)
 {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
@@ -411,16 +415,27 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
     int32_t algn_end_pos = refpos;
     const uint32_t* cigar = bam_get_cigar(rec);
     int k, z;
+    //check for overlapping mate and corect double counting if exists
+    int32_t mate_end = -1;
+    char* qname = bam_get_qname(rec);
+    if(overlapping_mates.find(qname) != overlapping_mates.end())
+        mate_end = overlapping_mates[qname];
     for (k = 0; k < rec->core.n_cigar; ++k)
     {
         if(bam_cigar_type(bam_cigar_op(cigar[k]))&2)
         {
             int32_t len = bam_cigar_oplen(cigar[k]);
+            for(z = algn_end_pos; z < algn_end_pos + len; z++)
+                if(mate_end == -1 || z > mate_end)
+                    coverages[z]++;
             algn_end_pos += len;
-            for(z = refpos; z < refpos + len; z++)
-                coverages[z]++;
         }
     }
+
+    //using the mosdepth approach to tracking overlapping mates
+    if(rec->core.tid == rec->core.mtid 
+            && algn_end_pos - 1 > rec->core.mpos && rec->core.pos <= rec->core.mpos)
+        overlapping_mates[qname] = algn_end_pos - 1;
     return algn_end_pos;
 }
     
@@ -468,6 +483,7 @@ int main(int argc, const char** argv) {
     //long chr_size = 250000000;
     long chr_size = -1;
     uint32_t* coverages;
+    std::unordered_map<std::string, int> overlapping_mates; 
     if(has_option(argv, argv+argc, "--coverage")) {
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
@@ -500,7 +516,7 @@ int main(int argc, const char** argv) {
                     }
                     reset_array(coverages, chr_size);
                 }
-                end_refpos = coverage(rec, coverages);
+                end_refpos = coverage(rec, coverages, overlapping_mates);
             }
 
             //track read starts/ends
@@ -523,6 +539,7 @@ int main(int argc, const char** argv) {
             }
             ptid = tid;
 
+            //echo back the sam record
             if(has_option(argv, argv+argc, "--echo-sam")) {
                 int ret = sam_format1(hdr, rec, &sambuf);
                 if(ret < 0) {
@@ -532,30 +549,33 @@ int main(int argc, const char** argv) {
                 kstring_out(std::cout, &sambuf);
                 std::cout << std::endl;
             }
-            if(first) {
-                if(print_qual) {
-                    uint8_t *qual = bam_get_qual(rec);
-                    if(qual[0] == 255) {
-                        std::cerr << "WARNING: --print-qual specified but quality strings don't seem to be present" << std::endl;
-                        print_qual = false;
+            //track alt. base coverages
+            if(has_option(argv, argv+argc, "--alts")) {
+                if(first) {
+                    if(print_qual) {
+                        uint8_t *qual = bam_get_qual(rec);
+                        if(qual[0] == 255) {
+                            std::cerr << "WARNING: --print-qual specified but quality strings don't seem to be present" << std::endl;
+                            print_qual = false;
+                        }
                     }
+                    first = false;
                 }
-                first = false;
-            }
-            const uint8_t *mdz = bam_aux_get(rec, "MD");
-            if(!mdz) {
-                if(has_option(argv, argv+argc, "--require-mdz")) {
-                    std::stringstream ss;
-                    ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
-                    throw std::runtime_error(ss.str());
+                const uint8_t *mdz = bam_aux_get(rec, "MD");
+                if(!mdz) {
+                    if(has_option(argv, argv+argc, "--require-mdz")) {
+                        std::stringstream ss;
+                        ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
+                        throw std::runtime_error(ss.str());
+                    }
+                    output_from_cigar(rec); // just use CIGAR
+                } else {
+                    mdzbuf.clear();
+                    parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
+                    output_from_cigar_mdz(
+                            rec, mdzbuf, print_qual,
+                            include_ss, include_n_mms); // use CIGAR and MD:Z
                 }
-                output_from_cigar(rec); // just use CIGAR
-            } else {
-                mdzbuf.clear();
-                parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
-                output_from_cigar_mdz(
-                        rec, mdzbuf, print_qual,
-                        include_ss, include_n_mms); // use CIGAR and MD:Z
             }
         }
     }
