@@ -370,19 +370,22 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
         arr[i] = 0;
 }
 
-static void print_array_nonzeros(const char* prefix, 
-                const uint32_t* arr, const long arr_sz) {
+static void print_array(const char* prefix, 
+                        const uint32_t* arr, 
+                        const long arr_sz,
+                        const bool skip_zeros) {
     for(long i = 0; i < arr_sz; i++) {
-        if(arr[i] > 0)
+        if(arr[i] > 0 || !skip_zeros)
             std::cout << prefix << '\t' 
                       << i+1 << '\t' 
                       << arr[i] << '\n';
     }
 }
 
-static uint32_t align_length(const bam1_t *rec)
+static int32_t align_length(const bam1_t *rec)
 {
-    uint32_t *cigar = bam_get_cigar(rec);
+    return bam_endpos(rec) - rec->core.pos;
+    /*uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
     uint32_t algn_len = 0;
     for(uint32_t k = 0; k < n_cigar; k++) {
@@ -397,9 +400,30 @@ static uint32_t align_length(const bam1_t *rec)
                 algn_len += run;
        }
     }
-    return algn_len;
+    return algn_len;*/
 }
-        
+
+static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
+{
+    int32_t refpos = rec->core.pos;
+    //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
+    int32_t pos = refpos;
+    int32_t algn_end_pos = refpos;
+    const uint32_t* cigar = bam_get_cigar(rec);
+    int k, z;
+    for (k = 0; k < rec->core.n_cigar; ++k)
+    {
+        if(bam_cigar_type(bam_cigar_op(cigar[k]))&2)
+        {
+            int32_t len = bam_cigar_oplen(cigar[k]);
+            algn_end_pos += len;
+            for(z = refpos; z < refpos + len; z++)
+                coverages[z]++;
+        }
+    }
+    return algn_end_pos;
+}
+    
 
 int main(int argc, const char** argv) {
     const char** argv_ptr = argv;
@@ -440,17 +464,21 @@ int main(int argc, const char** argv) {
     }
     kstring_t sambuf{ 0, 0, nullptr };
     bool first = true;
-    //TODO: fix this by reading the largest reference contig from header
-    //and using that as size
     //largest human chromosome is ~249M bases
     //long chr_size = 250000000;
-    long chr_size;
+    long chr_size = -1;
+    uint32_t* coverages;
+    if(has_option(argv, argv+argc, "--coverage")) {
+        chr_size = get_longest_target_size(hdr);
+        coverages = new uint32_t[chr_size];
+    }
     char prefix[50]="";
     int32_t ptid = -1;
     uint32_t* starts;
     uint32_t* ends;
     if(has_option(argv, argv+argc, "--read-ends")) {
-        chr_size = get_longest_target_size(hdr);
+        if(chr_size == -1) 
+            chr_size = get_longest_target_size(hdr);
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
     }
@@ -461,25 +489,39 @@ int main(int argc, const char** argv) {
         if((c->flag & BAM_FUNMAP) == 0) {
             //TODO track fragment lengths
 
+            int32_t tid = rec->core.tid;
+            int32_t end_refpos = -1;
+            //track coverage
+            if(has_option(argv, argv+argc, "--coverage")) {
+                if(tid != ptid) {
+                    if(ptid != -1) {
+                        sprintf(prefix, "cov\t%d", ptid);
+                        print_array(prefix, coverages, chr_size, true);
+                    }
+                    reset_array(coverages, chr_size);
+                }
+                end_refpos = coverage(rec, coverages);
+            }
+
             //track read starts/ends
             if(has_option(argv, argv+argc, "--read-ends")) {
                 int32_t refpos = rec->core.pos;
-                int32_t tid = rec->core.tid;
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "start\t%d", ptid);
-                        print_array_nonzeros(prefix, starts, chr_size);
+                        print_array(prefix, starts, chr_size, true);
                         sprintf(prefix, "end\t%d", ptid);
-                        print_array_nonzeros(prefix, ends, chr_size);
+                        print_array(prefix, ends, chr_size, true);
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
                 }
-                ptid = tid;
                 starts[refpos]++;
-                int32_t end_refpos = refpos + align_length(rec) - 1;
+                if(end_refpos == -1)
+                    end_refpos = refpos + align_length(rec) - 1;
                 ends[end_refpos]++;
             }
+            ptid = tid;
 
             if(has_option(argv, argv+argc, "--echo-sam")) {
                 int ret = sam_format1(hdr, rec, &sambuf);
@@ -517,12 +559,19 @@ int main(int argc, const char** argv) {
             }
         }
     }
+    if(has_option(argv, argv+argc, "--coverage")) {
+        if(ptid != -1) {
+            sprintf(prefix, "cov\t%d", ptid);
+            print_array(prefix, coverages, chr_size, true);
+        }
+        delete coverages;
+    }
     if(has_option(argv, argv+argc, "--read-ends")) {
         if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
-            print_array_nonzeros(prefix, starts, chr_size);
+            print_array(prefix, starts, chr_size, true);
             sprintf(prefix, "end\t%d", ptid);
-            print_array_nonzeros(prefix, ends, chr_size);
+            print_array(prefix, ends, chr_size, true);
         }
         delete starts;
         delete ends;
