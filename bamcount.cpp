@@ -376,13 +376,26 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 static void print_array(const char* prefix, 
                         const uint32_t* arr, 
                         const long arr_sz,
-                        const bool skip_zeros) {
+                        const bool skip_zeros,
+                        const bool collapse_regions) {
+    bool first = true;
+    uint32_t running_value = 0;
+    long last_pos = 0;
+    //this will print the coordinates in base-0
     for(long i = 0; i < arr_sz; i++) {
-        if(arr[i] > 0 || !skip_zeros)
-            std::cout << prefix << '\t' 
-                      << i+1 << '\t' 
-                      << arr[i] << '\n';
+        if(first || running_value != arr[i])
+        {
+            if(!first)
+                if(running_value > 0 || !skip_zeros)
+                    fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, i, running_value);
+            first = false;
+            running_value = arr[i];
+            last_pos = i;
+        }
     }
+    if(!first)
+        if(running_value > 0 || !skip_zeros)
+            fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, arr_sz, running_value);
 }
 
 static int32_t align_length(const bam1_t *rec)
@@ -407,7 +420,7 @@ static int32_t align_length(const bam1_t *rec)
 }
 
 static int32_t coverage(const bam1_t *rec, uint32_t* coverages, 
-                        std::unordered_map<std::string, int> overlapping_mates)
+                        std::unordered_map<std::string, int>* overlapping_mates)
 {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
@@ -418,24 +431,25 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages,
     //check for overlapping mate and corect double counting if exists
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
-    if(overlapping_mates.find(qname) != overlapping_mates.end())
-        mate_end = overlapping_mates[qname];
+    if(overlapping_mates->find(qname) != overlapping_mates->end() 
+                        && (rec->core.flag & BAM_FPROPER_PAIR) == 2)
+        mate_end = (*overlapping_mates)[qname];
     for (k = 0; k < rec->core.n_cigar; ++k)
     {
         if(bam_cigar_type(bam_cigar_op(cigar[k]))&2)
         {
             int32_t len = bam_cigar_oplen(cigar[k]);
             for(z = algn_end_pos; z < algn_end_pos + len; z++)
-                if(mate_end == -1 || z > mate_end)
+                if(z > mate_end)
                     coverages[z]++;
             algn_end_pos += len;
         }
     }
 
     //using the mosdepth approach to tracking overlapping mates
-    if(rec->core.tid == rec->core.mtid 
-            && algn_end_pos - 1 > rec->core.mpos && rec->core.pos <= rec->core.mpos)
-        overlapping_mates[qname] = algn_end_pos - 1;
+    if(rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
+            && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos)
+        (*overlapping_mates)[qname] = algn_end_pos - 1;
     return algn_end_pos;
 }
     
@@ -512,11 +526,11 @@ int main(int argc, const char** argv) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "cov\t%d", ptid);
-                        print_array(prefix, coverages, chr_size, true);
+                        print_array(prefix, coverages, hdr->target_len[ptid], false, true);
                     }
                     reset_array(coverages, chr_size);
                 }
-                end_refpos = coverage(rec, coverages, overlapping_mates);
+                end_refpos = coverage(rec, coverages, &overlapping_mates);
             }
 
             //track read starts/ends
@@ -525,9 +539,9 @@ int main(int argc, const char** argv) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "start\t%d", ptid);
-                        print_array(prefix, starts, chr_size, true);
+                        print_array(prefix, starts, hdr->target_len[ptid], true, true);
                         sprintf(prefix, "end\t%d", ptid);
-                        print_array(prefix, ends, chr_size, true);
+                        print_array(prefix, ends, hdr->target_len[ptid], true, true);
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
@@ -582,16 +596,16 @@ int main(int argc, const char** argv) {
     if(has_option(argv, argv+argc, "--coverage")) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            print_array(prefix, coverages, chr_size, true);
+            print_array(prefix, coverages, hdr->target_len[ptid], false, true);
         }
         delete coverages;
     }
     if(has_option(argv, argv+argc, "--read-ends")) {
         if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
-            print_array(prefix, starts, chr_size, true);
+            print_array(prefix, starts, hdr->target_len[ptid], true, true);
             sprintf(prefix, "end\t%d", ptid);
-            print_array(prefix, ends, chr_size, true);
+            print_array(prefix, ends, hdr->target_len[ptid], true, true);
         }
         delete starts;
         delete ends;
