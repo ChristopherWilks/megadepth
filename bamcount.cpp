@@ -431,6 +431,7 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages,
     //check for overlapping mate and corect double counting if exists
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
+    //TODO: speed this up
     if(overlapping_mates->find(qname) != overlapping_mates->end() 
                         && (rec->core.flag & BAM_FPROPER_PAIR) == 2)
         mate_end = (*overlapping_mates)[qname];
@@ -497,8 +498,10 @@ int main(int argc, const char** argv) {
     //long chr_size = 250000000;
     long chr_size = -1;
     uint32_t* coverages;
+    bool compute_coverage = false;
     std::unordered_map<std::string, int> overlapping_mates; 
     if(has_option(argv, argv+argc, "--coverage")) {
+        compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
     }
@@ -506,13 +509,20 @@ int main(int argc, const char** argv) {
     int32_t ptid = -1;
     uint32_t* starts;
     uint32_t* ends;
+    bool compute_ends = false;
     if(has_option(argv, argv+argc, "--read-ends")) {
+        compute_ends = true;
         if(chr_size == -1) 
             chr_size = get_longest_target_size(hdr);
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
     }
-
+    bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
+    bool compute_alts = has_option(argv, argv+argc, "--alts");
+    bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
+    //int max_ts = 100000;
+    int max_ts = 32;
+    int nts = 0; 
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -522,19 +532,22 @@ int main(int argc, const char** argv) {
             int32_t tid = rec->core.tid;
             int32_t end_refpos = -1;
             //track coverage
-            if(has_option(argv, argv+argc, "--coverage")) {
+            if(compute_coverage) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "cov\t%d", ptid);
                         print_array(prefix, coverages, hdr->target_len[ptid], false, true);
                     }
                     reset_array(coverages, chr_size);
+                    nts++;
+                    /*if(nts > max_ts)
+                        exit(0);*/
                 }
                 end_refpos = coverage(rec, coverages, &overlapping_mates);
             }
 
             //track read starts/ends
-            if(has_option(argv, argv+argc, "--read-ends")) {
+            if(compute_ends) {
                 int32_t refpos = rec->core.pos;
                 if(tid != ptid) {
                     if(ptid != -1) {
@@ -554,7 +567,7 @@ int main(int argc, const char** argv) {
             ptid = tid;
 
             //echo back the sam record
-            if(has_option(argv, argv+argc, "--echo-sam")) {
+            if(echo_sam) {
                 int ret = sam_format1(hdr, rec, &sambuf);
                 if(ret < 0) {
                     std::cerr << "Could not format SAM record: " << std::strerror(errno) << std::endl;
@@ -564,7 +577,7 @@ int main(int argc, const char** argv) {
                 std::cout << std::endl;
             }
             //track alt. base coverages
-            if(has_option(argv, argv+argc, "--alts")) {
+            if(compute_alts) {
                 if(first) {
                     if(print_qual) {
                         uint8_t *qual = bam_get_qual(rec);
@@ -577,7 +590,7 @@ int main(int argc, const char** argv) {
                 }
                 const uint8_t *mdz = bam_aux_get(rec, "MD");
                 if(!mdz) {
-                    if(has_option(argv, argv+argc, "--require-mdz")) {
+                    if(require_mdz) {
                         std::stringstream ss;
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
@@ -593,14 +606,14 @@ int main(int argc, const char** argv) {
             }
         }
     }
-    if(has_option(argv, argv+argc, "--coverage")) {
+    if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
             print_array(prefix, coverages, hdr->target_len[ptid], false, true);
         }
         delete coverages;
     }
-    if(has_option(argv, argv+argc, "--read-ends")) {
+    if(compute_ends) {
         if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
             print_array(prefix, starts, hdr->target_len[ptid], true, true);
