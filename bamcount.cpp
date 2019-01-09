@@ -10,7 +10,6 @@
 #include <string>
 #include <cerrno>
 #include <cstring>
-#include <unordered_map>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 
@@ -419,8 +418,7 @@ static int32_t align_length(const bam1_t *rec)
     return algn_len;*/
 }
 
-static int32_t coverage(const bam1_t *rec, uint32_t* coverages, 
-                        std::unordered_map<std::string, int>* overlapping_mates)
+static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
 {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
@@ -431,26 +429,24 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages,
     //check for overlapping mate and corect double counting if exists
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
-    //TODO: speed this up
-    if(overlapping_mates->find(qname) != overlapping_mates->end() 
-                        && (rec->core.flag & BAM_FPROPER_PAIR) == 2)
-        mate_end = (*overlapping_mates)[qname];
+
     for (k = 0; k < rec->core.n_cigar; ++k)
     {
         if(bam_cigar_type(bam_cigar_op(cigar[k]))&2)
         {
             int32_t len = bam_cigar_oplen(cigar[k]);
             for(z = algn_end_pos; z < algn_end_pos + len; z++)
-                if(z > mate_end)
-                    coverages[z]++;
+                coverages[z]++;
             algn_end_pos += len;
         }
     }
-
-    //using the mosdepth approach to tracking overlapping mates
+    //fix paired mate overlap double counting
     if(rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
             && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos)
-        (*overlapping_mates)[qname] = algn_end_pos - 1;
+    {
+        for(z = rec->core.mpos; z < algn_end_pos; z++)
+            coverages[z]--;
+    }
     return algn_end_pos;
 }
     
@@ -499,7 +495,6 @@ int main(int argc, const char** argv) {
     long chr_size = -1;
     uint32_t* coverages;
     bool compute_coverage = false;
-    std::unordered_map<std::string, int> overlapping_mates; 
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -520,9 +515,6 @@ int main(int argc, const char** argv) {
     bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
     bool compute_alts = has_option(argv, argv+argc, "--alts");
     bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
-    //int max_ts = 100000;
-    int max_ts = 32;
-    int nts = 0; 
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -539,11 +531,8 @@ int main(int argc, const char** argv) {
                         print_array(prefix, coverages, hdr->target_len[ptid], false, true);
                     }
                     reset_array(coverages, chr_size);
-                    nts++;
-                    /*if(nts > max_ts)
-                        exit(0);*/
                 }
-                end_refpos = coverage(rec, coverages, &overlapping_mates);
+                end_refpos = coverage(rec, coverages);
             }
 
             //track read starts/ends
