@@ -32,6 +32,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       expected\n"
     "  --no-head           Don't print sequence names and lengths in header\n"
     "  --echo-sam          Print a SAM record for each aligned read\n"
+    "  --threads           # of threads to do BAM decompression\n"
     "  --double-count      Allow overlapping ends of PE read to count twice toward\n"
     "                      coverage\n"
     "\n";
@@ -50,6 +51,10 @@ static const char* get_positional_n(const char ** begin, const char ** end, size
 
 static bool has_option(const char** begin, const char** end, const std::string& option) {
     return std::find(begin, end, option) != end;
+}
+
+static const char** get_option(const char** begin, const char** end, const std::string& option) {
+    return std::find(begin, end, option);
 }
 
 /**
@@ -418,7 +423,7 @@ static int32_t align_length(const bam1_t *rec)
     return algn_len;*/
 }
 
-static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
+static int32_t coverage(const bam1_t *rec, uint32_t* coverages, bool double_count)
 {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
@@ -441,7 +446,7 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages)
         }
     }
     //fix paired mate overlap double counting
-    if(rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
+    if(!double_count && rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
             && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos)
     {
         for(z = rec->core.mpos; z < algn_end_pos; z++)
@@ -466,10 +471,17 @@ int main(int argc, const char** argv) {
                   << std::strerror(errno) << std::endl;
         return 1;
     }
+    int nthreads = 0;
+    if(has_option(argv, argv+argc, "--threads")) {
+        const char** nthreads_ = get_option(argv, argv+argc, "--threads");
+        nthreads = atoi(*(++nthreads_));
+    }
+    hts_set_threads(bam_fh, nthreads);
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
     const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
+    const bool double_count = has_option(argv, argv+argc, "--double-count");
 
     size_t recs = 0;
     bam_hdr_t *hdr = sam_hdr_read(bam_fh);
@@ -512,9 +524,9 @@ int main(int argc, const char** argv) {
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
     }
-    bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
-    bool compute_alts = has_option(argv, argv+argc, "--alts");
-    bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
+    const bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
+    const bool compute_alts = has_option(argv, argv+argc, "--alts");
+    const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -532,7 +544,7 @@ int main(int argc, const char** argv) {
                     }
                     reset_array(coverages, chr_size);
                 }
-                end_refpos = coverage(rec, coverages);
+                end_refpos = coverage(rec, coverages, double_count);
             }
 
             //track read starts/ends
