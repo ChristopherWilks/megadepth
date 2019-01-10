@@ -15,6 +15,7 @@
 #include <vector>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
+#include "bigWig.h"
 
 //used for --annotation where we read a 3+ column BED file
 static const int CHRM_COL=0;
@@ -22,6 +23,7 @@ static const int START_COL=1;
 static const int END_COL=2;
 //1MB per line should be more than enough for CIO
 static const int LINE_BUFFER_LENGTH=1048576;
+static const int BIGWIG_INIT_VAL = 17;
 
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
@@ -33,6 +35,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --version           Show version.\n"
     "  --read-ends         Print counts of read starts/ends\n"
     "  --coverage          Print per-base coverage (slow but totally worth it)\n"
+    "   --bigwig            Output coverage as a BigWig file (requires libBigWig library)\n"
     "   --annotation        Path to BED file containing list of regions to sum coverage over (tab-delimited: chrm,start,end)\n"
     "  --alts              Print differing from ref per-base coverages\n"
     "   --include-softclip  Print a record for soft-clipped bases\n"
@@ -390,19 +393,30 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 }
 
 static void print_array(const char* prefix, 
+                        char* chrm,
                         const uint32_t* arr, 
                         const long arr_sz,
                         const bool skip_zeros,
-                        const bool collapse_regions) {
+                        const bool collapse_regions,
+                        bigWigFile_t* bwfp) {
     bool first = true;
-    uint32_t running_value = 0;
-    long last_pos = 0;
+    bool first_print = true;
+    float running_value = 0;
+    uint32_t last_pos = 0;
     //this will print the coordinates in base-0
-    for(long i = 0; i < arr_sz; i++) {
+    for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
-            if(!first)
-                if(running_value > 0 || !skip_zeros)
-                    fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, i, running_value);
+            if(!first) {
+                if(running_value > 0 || !skip_zeros) {
+                    if(bwfp && first_print)
+                        bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
+                    else if(bwfp)
+                        bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
+                    else
+                        fprintf(stdout, "%s\t%u\t%u\t%.0f\n", prefix, last_pos, i, running_value);
+                    first_print = false;
+                }
+            }
             first = false;
             running_value = arr[i];
             last_pos = i;
@@ -410,7 +424,12 @@ static void print_array(const char* prefix,
     }
     if(!first)
         if(running_value > 0 || !skip_zeros)
-            fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, arr_sz, running_value);
+            if(bwfp && first_print)
+                bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+            else if(bwfp)
+                bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+            else
+                fprintf(stdout, "%s\t%u\t%lu\t%0.f\n", prefix, last_pos, arr_sz, running_value);
 }
 
 static const int32_t align_length(const bam1_t *rec) {
@@ -418,7 +437,7 @@ static const int32_t align_length(const bam1_t *rec) {
     return bam_endpos(rec) - rec->core.pos;
 }
 
-static const int32_t coverage(const bam1_t *rec, uint32_t* coverages, const bool double_count) {
+static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, const bool double_count) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t pos = refpos;
@@ -527,6 +546,25 @@ static void output_missing_annotations(const annotation_map_t* annotations, cons
         }
     }
 }
+            
+static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* bam_fn) {
+    if(bwInit(1<<BIGWIG_INIT_VAL) != 0) {
+        fprintf(stderr, "Failed when calling bwInit with %d init val\n", BIGWIG_INIT_VAL);
+        exit(-1);
+    }
+    char fn[1024] = "";
+    sprintf(fn, "%s.bw", bam_fn);
+    bigWigFile_t* bwfp = bwOpen(fn, NULL, "w");
+    if(!bwfp) {
+        fprintf(stderr, "Failed when attempting to open BigWig file %s for writing\n", fn);
+        exit(-1);
+    }
+    //create with up to 10 zoom levels (though probably less in practice)
+    bwCreateHdr(bwfp, 10);
+    bwfp->cl = bwCreateChromList(hdr->target_name, hdr->target_len, hdr->n_targets);
+    bwWriteHdr(bwfp);
+    return bwfp;
+}
 
 int main(int argc, const char** argv) {
     const char** argv_ptr = argv;
@@ -584,12 +622,15 @@ int main(int argc, const char** argv) {
     uint8_t* annotation_tracking;
     bool compute_coverage = false;
     bool sum_annotation = false;
+    bigWigFile_t *bwfp = NULL;
     annotation_map_t annotations; 
     std::unordered_map<std::string, bool> annotation_chrs_seen;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
+        if(has_option(argv, argv+argc, "--bigwig"))
+            bwfp = create_bigwig_file(hdr, bam_arg.c_str());
         //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
         //maps chromosome to vector of uint arrays storing start/end of annotated intervals
         int err = 0;
@@ -633,7 +674,7 @@ int main(int argc, const char** argv) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "cov\t%d", ptid);
-                        print_array(prefix, coverages, hdr->target_len[ptid], false, true);
+                        print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                             sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
@@ -642,7 +683,7 @@ int main(int argc, const char** argv) {
                     }
                     reset_array(coverages, chr_size);
                 }
-                end_refpos = coverage(rec, coverages, double_count);
+                end_refpos = calculate_coverage(rec, coverages, double_count);
             }
 
             //track read starts/ends
@@ -651,9 +692,9 @@ int main(int argc, const char** argv) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "start\t%d", ptid);
-                        print_array(prefix, starts, hdr->target_len[ptid], true, true);
+                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, NULL);
                         sprintf(prefix, "end\t%d", ptid);
-                        print_array(prefix, ends, hdr->target_len[ptid], true, true);
+                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, NULL);
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
@@ -708,7 +749,7 @@ int main(int argc, const char** argv) {
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            print_array(prefix, coverages, hdr->target_len[ptid], false, true);
+            print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
@@ -722,12 +763,16 @@ int main(int argc, const char** argv) {
     if(compute_ends) {
         if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
-            print_array(prefix, starts, hdr->target_len[ptid], true, true);
+            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, NULL);
             sprintf(prefix, "end\t%d", ptid);
-            print_array(prefix, ends, hdr->target_len[ptid], true, true);
+            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, NULL);
         }
         delete starts;
         delete ends;
+    }
+    if(bwfp) {
+        bwClose(bwfp);
+        bwCleanup();
     }
     std::cout << "Read " << recs << " records" << std::endl;
     return 0;
