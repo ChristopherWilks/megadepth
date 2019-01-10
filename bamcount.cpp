@@ -1,5 +1,6 @@
 //
 // Created by Ben Langmead on 2018-12-12.
+// modified by cwilks 2019-01-09.
 //
 
 #include <iostream>
@@ -10,8 +11,17 @@
 #include <string>
 #include <cerrno>
 #include <cstring>
+#include <unordered_map>
+#include <vector>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
+
+//used for --annotation where we read a 3+ column BED file
+static const int CHRM_COL=0;
+static const int START_COL=1;
+static const int END_COL=2;
+//1MB per line should be more than enough for CIO
+static const int LINE_BUFFER_LENGTH=1048576;
 
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
@@ -23,6 +33,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --version           Show version.\n"
     "  --read-ends         Print counts of read starts/ends\n"
     "  --coverage          Print per-base coverage (slow but totally worth it)\n"
+    "   --annotation        Path to BED file containing list of regions to sum coverage over (tab-delimited: chrm,start,end)\n"
     "  --alts              Print differing from ref per-base coverages\n"
     "   --include-softclip  Print a record for soft-clipped bases\n"
     "   --include-n         Print mismatch records when mismatched read base is N\n"
@@ -54,7 +65,8 @@ static bool has_option(const char** begin, const char** end, const std::string& 
 }
 
 static const char** get_option(const char** begin, const char** end, const std::string& option) {
-    return std::find(begin, end, option);
+    const char** itr = std::find(begin, end, option);
+    return ++itr;
 }
 
 /**
@@ -363,7 +375,7 @@ static void print_header(const bam_hdr_t * hdr) {
     }
 }
 
-static long get_longest_target_size(const bam_hdr_t * hdr) {
+static const long get_longest_target_size(const bam_hdr_t * hdr) {
     long max = 0;
     for(int32_t i = 0; i < hdr->n_targets; i++) {
         if(hdr->target_len[i] > max)
@@ -387,8 +399,7 @@ static void print_array(const char* prefix,
     long last_pos = 0;
     //this will print the coordinates in base-0
     for(long i = 0; i < arr_sz; i++) {
-        if(first || running_value != arr[i])
-        {
+        if(first || running_value != arr[i]) {
             if(!first)
                 if(running_value > 0 || !skip_zeros)
                     fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, i, running_value);
@@ -402,29 +413,12 @@ static void print_array(const char* prefix,
             fprintf(stdout, "%s\t%lu\t%lu\t%u\n", prefix, last_pos, arr_sz, running_value);
 }
 
-static int32_t align_length(const bam1_t *rec)
-{
+static const int32_t align_length(const bam1_t *rec) {
+    //bam_endpos processes the whole cigar string
     return bam_endpos(rec) - rec->core.pos;
-    /*uint32_t *cigar = bam_get_cigar(rec);
-    uint32_t n_cigar = rec->core.n_cigar;
-    uint32_t algn_len = 0;
-    for(uint32_t k = 0; k < n_cigar; k++) {
-        int op = bam_cigar_op(cigar[k]);
-        int run = bam_cigar_oplen(cigar[k]);
-        switch(op) {
-            case BAM_CMATCH: 
-            case BAM_CDEL: 
-            case BAM_CREF_SKIP:
-            case BAM_CEQUAL:
-            case BAM_CDIFF:
-                algn_len += run;
-       }
-    }
-    return algn_len;*/
 }
 
-static int32_t coverage(const bam1_t *rec, uint32_t* coverages, bool double_count)
-{
+static const int32_t coverage(const bam1_t *rec, uint32_t* coverages, const bool double_count) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t pos = refpos;
@@ -435,10 +429,8 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages, bool double_coun
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
 
-    for (k = 0; k < rec->core.n_cigar; ++k)
-    {
-        if(bam_cigar_type(bam_cigar_op(cigar[k]))&2)
-        {
+    for (k = 0; k < rec->core.n_cigar; ++k) {
+        if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
             int32_t len = bam_cigar_oplen(cigar[k]);
             for(z = algn_end_pos; z < algn_end_pos + len; z++)
                 coverages[z]++;
@@ -447,14 +439,136 @@ static int32_t coverage(const bam1_t *rec, uint32_t* coverages, bool double_coun
     }
     //fix paired mate overlap double counting
     if(!double_count && rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
-            && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos)
-    {
+            && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos) {
         for(z = rec->core.mpos; z < algn_end_pos; z++)
             coverages[z]--;
     }
     return algn_end_pos;
 }
+
+typedef std::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
+//about 3x faster than the sstring/string::getline version
+static const int process_region_line(char* line, const char* delim, annotation_map_t* amap) {
+	char* line_copy = strdup(line);
+	char* tok = strtok(line_copy, delim);
+	int i = 0;
+	char* chrm;
+    long start;
+    long end;
+    int ret = 0;
+	int last_col = END_COL;
+	while(tok != NULL) {
+		if(i > last_col)
+			break;
+		if(i == CHRM_COL) {
+			chrm = strdup(tok);
+		}
+		if(i == START_COL)
+			start = atol(tok);
+		if(i == END_COL)
+			end = atol(tok);
+		i++;
+		tok = strtok(NULL,delim);
+	}
+    long* coords = new long(2);
+    coords[0] = start;
+    coords[1] = end;
+    if(amap->find(chrm) == amap->end()) {
+        std::vector<long*>* v = new std::vector<long*>();
+        (*amap)[chrm] = v;
+    }
+    (*amap)[chrm]->push_back(coords);
+	if(line_copy)
+		free(line_copy);
+	if(line)
+		free(line);
+    return ret;
+}
     
+static const int read_annotation(FILE* fin, annotation_map_t* amap) {
+	char* line = new char[LINE_BUFFER_LENGTH];
+	size_t length = LINE_BUFFER_LENGTH;
+	assert(fin);
+	ssize_t bytes_read = getline(&line, &length, fin);
+	int err;
+	while(bytes_read != -1) {
+	    err = process_region_line(strdup(line), "\t", amap);
+        assert(err==0);
+		bytes_read = getline(&line, &length, fin);
+    }
+	std::cerr << "building whole annotation region map done\n";
+    return err;
+}
+
+//this function stores indications 
+//across the current chromosome of 
+//where regions that are annotated are
+//so they can be summed
+const int ANNOT_START = 1;
+const int ANNOT_MID_END = 2;
+static void reset_annotation_array(uint8_t* annotation_tracking, const long chr_size, const std::vector<long*>* annotations)
+{
+    long z, j;
+    for(z = 0; z < chr_size; z++)
+        annotation_tracking[z] = 0;
+    for(z = 0; z < annotations->size(); z++) {
+        //put indications for start to end region
+        long start = (annotations->at(z))[0];
+        long end = (annotations->at(z))[1];
+        annotation_tracking[start] = ANNOT_START;
+        for(j = start+1; j < end; j++)
+            annotation_tracking[j] = ANNOT_MID_END;
+    }
+}
+
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm) {
+    long z, j;
+    for(z = 0; z < annotations->size(); z++) {
+        long sum = 0;
+        long start = (*annotations)[z][0];
+        long end = (*annotations)[z][1];
+        for(j = start; j < end; j++) {
+            assert(j < chr_size);
+            sum += coverages[j];
+        }
+        fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+    }
+}
+
+/*static void sum_annotations(const uint32_t* coverages, const uint8_t* annotation_tracking, const long chr_size, const char* chrm) {
+    long z;
+    long current_sum = 0;
+    long current_start = -1;
+    for(z = 0; z < chr_size; z++) {
+        if(annotation_tracking[z] == ANNOT_START || 
+                (annotation_tracking[z] == 0 && current_start > -1)) {
+            if(current_start > -1)
+                fprintf(stdout,"annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, current_start, z, current_sum);
+            current_start = -1;
+            current_sum = 0;
+            if(annotation_tracking[z] != 0) {
+                current_start = z;
+                current_sum = coverages[z];
+            }
+        }
+        if(annotation_tracking[z] == ANNOT_MID_END)
+           current_sum += coverages[z]; 
+    }
+    if(current_start > -1)
+        fprintf(stdout,"annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, current_start, chr_size, current_sum);
+}*/
+
+static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen) {
+    for(auto itr = annotations->begin(); itr != annotations->end(); ++itr) {
+        if(annotations_seen->find(itr->first) == annotations_seen->end()) {
+            long z;
+            std::vector<long*>* v = itr->second;
+            for(z = 0; z < v->size(); z++) {
+                fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t0\n", itr->first.c_str(), (*v)[z][0], (*v)[z][1]);
+            }
+        }
+    }
+}
 
 int main(int argc, const char** argv) {
     const char** argv_ptr = argv;
@@ -471,12 +585,17 @@ int main(int argc, const char** argv) {
                   << std::strerror(errno) << std::endl;
         return 1;
     }
+    //number of bam decompression threads
+    //0 == 1 thread for the whole program, i.e.
+    //decompression shares a single core with processing
     int nthreads = 0;
     if(has_option(argv, argv+argc, "--threads")) {
         const char** nthreads_ = get_option(argv, argv+argc, "--threads");
-        nthreads = atoi(*(++nthreads_));
+        nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
+
+
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
@@ -506,11 +625,29 @@ int main(int argc, const char** argv) {
     //long chr_size = 250000000;
     long chr_size = -1;
     uint32_t* coverages;
+    uint8_t* annotation_tracking;
     bool compute_coverage = false;
+    bool sum_annotation = false;
+    annotation_map_t annotations; 
+    std::unordered_map<std::string, bool> annotation_chrs_seen;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
+        //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
+        //maps chromosome to vector of uint arrays storing start/end of annotated intervals
+        int err = 0;
+        if(has_option(argv, argv+argc, "--annotation")) {
+            sum_annotation = true;
+            annotation_tracking = new uint8_t[chr_size];
+            const char* afile = *(get_option(argv, argv+argc, "--annotation"));
+            FILE* afp = fopen(afile, "r");
+            err = read_annotation(afp, &annotations);
+            fclose(afp);
+            assert(annotations.size() > 0);
+            std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+        }
+        assert(err == 0);
     }
     char prefix[50]="";
     int32_t ptid = -1;
@@ -541,8 +678,16 @@ int main(int argc, const char** argv) {
                     if(ptid != -1) {
                         sprintf(prefix, "cov\t%d", ptid);
                         print_array(prefix, coverages, hdr->target_len[ptid], false, true);
+                        //if we also want to sum coverage across a user supplied file of annotated regions
+                        if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
+                            annotation_chrs_seen[hdr->target_name[ptid]] = true;
+                        }
                     }
                     reset_array(coverages, chr_size);
+                    if(sum_annotation)
+                        if(annotations.find(hdr->target_name[tid]) != annotations.end())
+                            reset_annotation_array(annotation_tracking, chr_size, annotations[hdr->target_name[tid]]);
                 }
                 end_refpos = coverage(rec, coverages, double_count);
             }
@@ -611,8 +756,16 @@ int main(int argc, const char** argv) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
             print_array(prefix, coverages, hdr->target_len[ptid], false, true);
+            if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
+                //sum_annotations(coverages, annotation_tracking, hdr->target_len[ptid], hdr->target_name[ptid]);
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
+                annotation_chrs_seen[hdr->target_name[ptid]] = true;
+            }
         }
         delete coverages;
+        if(sum_annotation)
+            output_missing_annotations(&annotations, &annotation_chrs_seen);
+
     }
     if(compute_ends) {
         if(ptid != -1) {
