@@ -500,27 +500,6 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-//this function stores indications 
-//across the current chromosome of 
-//where regions that are annotated are
-//so they can be summed
-const int ANNOT_START = 1;
-const int ANNOT_MID_END = 2;
-static void reset_annotation_array(uint8_t* annotation_tracking, const long chr_size, const std::vector<long*>* annotations)
-{
-    long z, j;
-    for(z = 0; z < chr_size; z++)
-        annotation_tracking[z] = 0;
-    for(z = 0; z < annotations->size(); z++) {
-        //put indications for start to end region
-        long start = (annotations->at(z))[0];
-        long end = (annotations->at(z))[1];
-        annotation_tracking[start] = ANNOT_START;
-        for(j = start+1; j < end; j++)
-            annotation_tracking[j] = ANNOT_MID_END;
-    }
-}
-
 static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
@@ -535,36 +514,15 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
     }
 }
 
-/*static void sum_annotations(const uint32_t* coverages, const uint8_t* annotation_tracking, const long chr_size, const char* chrm) {
-    long z;
-    long current_sum = 0;
-    long current_start = -1;
-    for(z = 0; z < chr_size; z++) {
-        if(annotation_tracking[z] == ANNOT_START || 
-                (annotation_tracking[z] == 0 && current_start > -1)) {
-            if(current_start > -1)
-                fprintf(stdout,"annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, current_start, z, current_sum);
-            current_start = -1;
-            current_sum = 0;
-            if(annotation_tracking[z] != 0) {
-                current_start = z;
-                current_sum = coverages[z];
-            }
-        }
-        if(annotation_tracking[z] == ANNOT_MID_END)
-           current_sum += coverages[z]; 
-    }
-    if(current_start > -1)
-        fprintf(stdout,"annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, current_start, chr_size, current_sum);
-}*/
-
 static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen) {
     for(auto itr = annotations->begin(); itr != annotations->end(); ++itr) {
         if(annotations_seen->find(itr->first) == annotations_seen->end()) {
             long z;
-            std::vector<long*>* v = itr->second;
-            for(z = 0; z < v->size(); z++) {
-                fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t0\n", itr->first.c_str(), (*v)[z][0], (*v)[z][1]);
+            std::vector<long*>* annotations_for_chr = itr->second;
+            for(z = 0; z < annotations_for_chr->size(); z++) {
+                long start = (*annotations_for_chr)[z][0];
+                long end = (*annotations_for_chr)[z][1];
+                fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t0\n", itr->first.c_str(), start, end);
             }
         }
     }
@@ -594,8 +552,6 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
-
-
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
@@ -685,9 +641,6 @@ int main(int argc, const char** argv) {
                         }
                     }
                     reset_array(coverages, chr_size);
-                    if(sum_annotation)
-                        if(annotations.find(hdr->target_name[tid]) != annotations.end())
-                            reset_annotation_array(annotation_tracking, chr_size, annotations[hdr->target_name[tid]]);
                 }
                 end_refpos = coverage(rec, coverages, double_count);
             }
@@ -757,7 +710,6 @@ int main(int argc, const char** argv) {
             sprintf(prefix, "cov\t%d", ptid);
             print_array(prefix, coverages, hdr->target_len[ptid], false, true);
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                //sum_annotations(coverages, annotation_tracking, hdr->target_len[ptid], hdr->target_name[ptid]);
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
