@@ -24,6 +24,7 @@ static const int END_COL=2;
 //1MB per line should be more than enough for CIO
 static const int LINE_BUFFER_LENGTH=1048576;
 static const int BIGWIG_INIT_VAL = 17;
+static const int BW_UNIQUE_MIN_QUAL = 10;
 
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
@@ -36,7 +37,12 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --read-ends         Print counts of read starts/ends\n"
     "  --coverage          Print per-base coverage (slow but totally worth it)\n"
     "   --bigwig            Output coverage as a BigWig file (requires libBigWig library)\n"
-    "   --annotation        Path to BED file containing list of regions to sum coverage over (tab-delimited: chrm,start,end)\n"
+    "   --annotation        Path to BED file containing list of regions to sum coverage over\n"
+    "                       (tab-delimited: chrm,start,end)\n"
+    "   --min-unique-qual   Output a second coverage stream requiring at least this mapping quality\n"
+    "                       (assumes --bigwig is being passed in).\n"
+    "                       Will also produce a second stream of annotation sums based on this coverage\n"
+   "                        if --annotation is enabled\n"
     "  --alts              Print differing from ref per-base coverages\n"
     "   --include-softclip  Print a record for soft-clipped bases\n"
     "   --include-n         Print mismatch records when mismatched read base is N\n"
@@ -437,7 +443,10 @@ static const int32_t align_length(const bam1_t *rec) {
     return bam_endpos(rec) - rec->core.pos;
 }
 
-static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, const bool double_count) {
+typedef std::unordered_map<std::string, int32_t> read2len;
+static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
+                                        uint32_t* unique_coverages, const bool double_count, 
+                                        const int min_qual, read2len* overlapping_mates) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t pos = refpos;
@@ -447,20 +456,35 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
     //check for overlapping mate and corect double counting if exists
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
-
+    bool unique = min_qual > 0 && rec->core.qual >= min_qual;
+    //need to fix double counting if one mate was unique and the later one was not
+    if(!double_count && min_qual > 0 && rec->core.qual < min_qual && 
+                overlapping_mates->find(qname) != overlapping_mates->end()) {
+        int32_t mate_end_pos = (*overlapping_mates)[qname];
+        for(z = refpos; z < mate_end_pos; z++)
+            unique_coverages[z]++;
+    }
     for (k = 0; k < rec->core.n_cigar; ++k) {
         if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
             int32_t len = bam_cigar_oplen(cigar[k]);
-            for(z = algn_end_pos; z < algn_end_pos + len; z++)
+            for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                 coverages[z]++;
+                if(unique)
+                    unique_coverages[z]++;
+            }
             algn_end_pos += len;
         }
     }
     //fix paired mate overlap double counting
     if(!double_count && rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
             && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos) {
-        for(z = rec->core.mpos; z < algn_end_pos; z++)
+        if(unique)
+            (*overlapping_mates)[qname] = algn_end_pos;
+        for(z = rec->core.mpos; z < algn_end_pos; z++) {
             coverages[z]--;
+            if(unique)
+                unique_coverages[z]--;
+        }
     }
     return algn_end_pos;
 }
@@ -519,7 +543,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -529,11 +553,11 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
             assert(j < chr_size);
             sum += coverages[j];
         }
-        fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+        fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
     }
 }
 
-static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen) {
+static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp) {
     for(auto itr = annotations->begin(); itr != annotations->end(); ++itr) {
         if(annotations_seen->find(itr->first) == annotations_seen->end()) {
             long z;
@@ -541,7 +565,7 @@ static void output_missing_annotations(const annotation_map_t* annotations, cons
             for(z = 0; z < annotations_for_chr->size(); z++) {
                 long start = (*annotations_for_chr)[z][0];
                 long end = (*annotations_for_chr)[z][1];
-                fprintf(stdout, "annot_sum\t%s\t%lu\t%lu\t0\n", itr->first.c_str(), start, end);
+                fprintf(ofp, "%s\t%lu\t%lu\t0\n", itr->first.c_str(), start, end);
             }
         }
     }
@@ -619,10 +643,17 @@ int main(int argc, const char** argv) {
     //long chr_size = 250000000;
     long chr_size = -1;
     uint32_t* coverages;
+    uint32_t* unique_coverages;
     uint8_t* annotation_tracking;
     bool compute_coverage = false;
     bool sum_annotation = false;
+    bool unique = false;
+    int bw_unique_min_qual = 0;
+    FILE* afp;
+    FILE* uafp;
+    read2len overlapping_mates;
     bigWigFile_t *bwfp = NULL;
+    bigWigFile_t *ubwfp = NULL;
     annotation_map_t annotations; 
     std::unordered_map<std::string, bool> annotation_chrs_seen;
     if(has_option(argv, argv+argc, "--coverage")) {
@@ -631,6 +662,14 @@ int main(int argc, const char** argv) {
         coverages = new uint32_t[chr_size];
         if(has_option(argv, argv+argc, "--bigwig"))
             bwfp = create_bigwig_file(hdr, bam_arg.c_str());
+        if(has_option(argv, argv+argc, "--min-unique-qual")) {
+            unique = true;
+            char ufn[1024];
+            sprintf(ufn, "%s.unique", bam_arg.c_str());
+            ubwfp = create_bigwig_file(hdr, ufn);
+            bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
+            unique_coverages = new uint32_t[chr_size];
+        }
         //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
         //maps chromosome to vector of uint arrays storing start/end of annotated intervals
         int err = 0;
@@ -638,9 +677,16 @@ int main(int argc, const char** argv) {
             sum_annotation = true;
             annotation_tracking = new uint8_t[chr_size];
             const char* afile = *(get_option(argv, argv+argc, "--annotation"));
-            FILE* afp = fopen(afile, "r");
+            afp = fopen(afile, "r");
             err = read_annotation(afp, &annotations);
             fclose(afp);
+            char afn[1024];
+            sprintf(afn, "%s.annot_sums.tsv", bam_arg.c_str());
+            afp = fopen(afn, "w");
+            if(ubwfp) {
+                sprintf(afn, "%s.annot_sums.unique.tsv", bam_arg.c_str());
+                uafp = fopen(afn, "w");
+            }
             assert(annotations.size() > 0);
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
         }
@@ -675,15 +721,21 @@ int main(int argc, const char** argv) {
                     if(ptid != -1) {
                         sprintf(prefix, "cov\t%d", ptid);
                         print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+                        if(unique)
+                            print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
+                            if(unique)
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp);
                             annotation_chrs_seen[hdr->target_name[ptid]] = true;
                         }
                     }
                     reset_array(coverages, chr_size);
+                    if(unique)
+                        reset_array(unique_coverages, chr_size);
                 }
-                end_refpos = calculate_coverage(rec, coverages, double_count);
+                end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates);
             }
 
             //track read starts/ends
@@ -750,15 +802,23 @@ int main(int argc, const char** argv) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
             print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+            if(unique)
+                print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid]);
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
+                if(unique)
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp);
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
         }
         delete coverages;
-        if(sum_annotation)
-            output_missing_annotations(&annotations, &annotation_chrs_seen);
-
+        if(unique)
+            delete unique_coverages;
+        if(sum_annotation) {
+            output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
+            if(unique)
+                output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
+        }
     }
     if(compute_ends) {
         if(ptid != -1) {
@@ -772,8 +832,17 @@ int main(int argc, const char** argv) {
     }
     if(bwfp) {
         bwClose(bwfp);
+        if(!ubwfp)
+            bwCleanup();
+    }
+    if(ubwfp) {
+        bwClose(ubwfp);
         bwCleanup();
     }
+    if(afp)
+        fclose(afp);
+    if(uafp)
+        fclose(uafp);
     std::cout << "Read " << recs << " records" << std::endl;
     return 0;
 }
