@@ -6,3 +6,5 @@ docopt
 .DS_Store
 bamcount
 bamcount-debug
+attic
+htslib
