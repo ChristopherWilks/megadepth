@@ -456,10 +456,10 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //check for overlapping mate and corect double counting if exists
     int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
-    bool unique = min_qual > 0 && rec->core.qual >= min_qual;
+    bool unique = min_qual > 0;
+    bool passing_qual = rec->core.qual >= min_qual;
     //need to fix double counting if one mate was unique and the later one was not
-    if(!double_count && min_qual > 0 && rec->core.qual < min_qual && 
-                overlapping_mates->find(qname) != overlapping_mates->end()) {
+    if(!double_count && unique && !passing_qual && overlapping_mates->find(qname) != overlapping_mates->end()) {
         int32_t mate_end_pos = (*overlapping_mates)[qname];
         for(z = refpos; z < mate_end_pos; z++)
             unique_coverages[z]++;
@@ -469,7 +469,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             int32_t len = bam_cigar_oplen(cigar[k]);
             for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                 coverages[z]++;
-                if(unique)
+                if(unique && passing_qual)
                     unique_coverages[z]++;
             }
             algn_end_pos += len;
@@ -478,11 +478,11 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //fix paired mate overlap double counting
     if(!double_count && rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
             && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos) {
-        if(unique)
+        if(unique && passing_qual)
             (*overlapping_mates)[qname] = algn_end_pos;
         for(z = rec->core.mpos; z < algn_end_pos; z++) {
             coverages[z]--;
-            if(unique)
+            if(unique && passing_qual)
                 unique_coverages[z]--;
         }
     }
@@ -591,15 +591,19 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* bam_fn
 }
 
 int main(int argc, const char** argv) {
-    const char** argv_ptr = argv;
-    const char *bam_arg_c_str = get_positional_n(++argv_ptr, argv+argc, 0);
-    if(!bam_arg_c_str) {
+    argv++; argc--;  // skip binary name
+    if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
+        std::cout << USAGE << std::endl;
+        return 0;
+    }
+    const char *bam_arg = get_positional_n(argv, argv+argc, 0);
+    if(!bam_arg) {
         std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
         return 1;
     }
-    std::string bam_arg{bam_arg_c_str};
+    std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
 
-    htsFile *bam_fh = sam_open(bam_arg.c_str(), "r");
+    htsFile *bam_fh = sam_open(bam_arg, "r");
     if(!bam_fh) {
         std::cerr << "ERROR: Could not open " << bam_arg << ": "
                   << std::strerror(errno) << std::endl;
@@ -632,7 +636,7 @@ int main(int argc, const char** argv) {
     }
     std::vector<MdzOp> mdzbuf;
     bam1_t *rec = bam_init1();
-    if (!rec) {
+    if(!rec) {
         std::cerr << "ERROR: Could not initialize BAM object: "
                   << std::strerror(errno) << std::endl;
         return 1;
@@ -661,11 +665,11 @@ int main(int argc, const char** argv) {
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
         if(has_option(argv, argv+argc, "--bigwig"))
-            bwfp = create_bigwig_file(hdr, bam_arg.c_str());
+            bwfp = create_bigwig_file(hdr, bam_arg);
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
             unique = true;
             char ufn[1024];
-            sprintf(ufn, "%s.unique", bam_arg.c_str());
+            sprintf(ufn, "%s.unique", bam_arg);
             ubwfp = create_bigwig_file(hdr, ufn);
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
@@ -681,10 +685,10 @@ int main(int argc, const char** argv) {
             err = read_annotation(afp, &annotations);
             fclose(afp);
             char afn[1024];
-            sprintf(afn, "%s.annot_sums.tsv", bam_arg.c_str());
+            sprintf(afn, "%s.annot_sums.tsv", bam_arg);
             afp = fopen(afn, "w");
             if(ubwfp) {
-                sprintf(afn, "%s.annot_sums.unique.tsv", bam_arg.c_str());
+                sprintf(afn, "%s.annot_sums.unique.tsv", bam_arg);
                 uafp = fopen(afn, "w");
             }
             assert(annotations.size() > 0);
@@ -719,6 +723,7 @@ int main(int argc, const char** argv) {
             if(compute_coverage) {
                 if(tid != ptid) {
                     if(ptid != -1) {
+                        overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
                         print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
                         if(unique)
