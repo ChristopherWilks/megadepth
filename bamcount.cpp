@@ -398,7 +398,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
         arr[i] = 0;
 }
 
-static void print_array(const char* prefix, 
+static uint64_t print_array(const char* prefix, 
                         char* chrm,
                         const uint32_t* arr, 
                         const long arr_sz,
@@ -409,11 +409,14 @@ static void print_array(const char* prefix,
     bool first_print = true;
     float running_value = 0;
     uint32_t last_pos = 0;
+    uint64_t auc = 0;
     //this will print the coordinates in base-0
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
             if(!first) {
                 if(running_value > 0 || !skip_zeros) {
+                    //based on wiggletools' AUC calculation
+                    auc += (i - last_pos) * ((long) running_value);
                     if(bwfp && first_print)
                         bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
                     else if(bwfp)
@@ -428,14 +431,18 @@ static void print_array(const char* prefix,
             last_pos = i;
         }
     }
-    if(!first)
-        if(running_value > 0 || !skip_zeros)
+    if(!first) {
+        if(running_value > 0 || !skip_zeros) {
+            auc += (arr_sz - last_pos) * ((long) running_value);
             if(bwfp && first_print)
                 bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
             else if(bwfp)
                 bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
             else
                 fprintf(stdout, "%s\t%u\t%lu\t%0.f\n", prefix, last_pos, arr_sz, running_value);
+        }
+    }
+    return auc;
 }
 
 static const int32_t align_length(const bam1_t *rec) {
@@ -653,8 +660,8 @@ int main(int argc, const char** argv) {
     bool sum_annotation = false;
     bool unique = false;
     int bw_unique_min_qual = 0;
-    FILE* afp;
-    FILE* uafp;
+    FILE* afp = NULL;
+    FILE* uafp = NULL;
     read2len overlapping_mates;
     bigWigFile_t *bwfp = NULL;
     bigWigFile_t *ubwfp = NULL;
@@ -711,6 +718,9 @@ int main(int argc, const char** argv) {
     const bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
     const bool compute_alts = has_option(argv, argv+argc, "--alts");
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
+    //calculates AUC automatically
+    uint64_t all_auc = 0;
+    uint64_t unique_auc = 0;
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -725,9 +735,9 @@ int main(int argc, const char** argv) {
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
-                        print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
                         if(unique)
-                            print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                             sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
@@ -806,9 +816,9 @@ int main(int argc, const char** argv) {
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
             if(unique)
-                print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
                 if(unique)
@@ -824,6 +834,9 @@ int main(int argc, const char** argv) {
             if(unique)
                 output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
         }
+        fprintf(stderr, "All AUC\t%lu\n", all_auc);
+        if(unique)
+            fprintf(stderr, "Unique AUC\t%lu\n", unique_auc);
     }
     if(compute_ends) {
         if(ptid != -1) {
