@@ -8,6 +8,7 @@ fi
 cd /code
 
 ./get_htslib.sh
+./get_libBigWig.sh
 
 set -x
 
