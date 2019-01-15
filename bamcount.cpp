@@ -35,6 +35,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  -h --help           Show this screen.\n"
     "  --version           Show version.\n"
     "  --read-ends         Print counts of read starts/ends\n"
+    "  --frag-dist         Print fragment length distribution per chromosome\n"
     "  --coverage          Print per-base coverage (slow but totally worth it)\n"
     "   --bigwig            Output coverage as a BigWig file (requires libBigWig library)\n"
     "   --annotation        Path to BED file containing list of regions to sum coverage over\n"
@@ -596,6 +597,13 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* bam_fn
     bwWriteHdr(bwfp);
     return bwfp;
 }
+                        
+typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
+static void print_frag_distribution(const char* chrm, const long arr_sz, const fraglen2count* frag_dist, FILE* outfn) 
+{
+    for(auto itr = frag_dist->begin(); itr != frag_dist->end(); ++itr)
+        fprintf(outfn, "%s\t%d\t%u\n", chrm, itr->first, itr->second);
+}
 
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
@@ -715,6 +723,15 @@ int main(int argc, const char** argv) {
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
     }
+    bool print_frag_dist = false;
+    fraglen2count frag_dist;
+    FILE* fragdist_fd = NULL;
+    if(has_option(argv, argv+argc, "--frag-dist")) {
+        print_frag_dist = true;
+        char fdfn[1024];
+        sprintf(fdfn, "%s.frag_dist.tsv", bam_arg);
+        fragdist_fd = fopen(fdfn, "w");
+    }
     const bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
     const bool compute_alts = has_option(argv, argv+argc, "--alts");
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
@@ -725,10 +742,20 @@ int main(int argc, const char** argv) {
         recs++;
         bam1_core_t *c = &rec->core;
         if((c->flag & BAM_FUNMAP) == 0) {
-            //TODO track fragment lengths
-
             int32_t tid = rec->core.tid;
             int32_t end_refpos = -1;
+            //track fragment lengths per chromosome
+            if(print_frag_dist) {
+                if(tid != ptid) {
+                    if(ptid != -1) {
+                        print_frag_distribution(hdr->target_name[ptid], hdr->target_len[ptid], &frag_dist, fragdist_fd);
+                        frag_dist.clear();
+                    }
+                }
+                //only count positive insert sizes
+                if(rec->core.isize >= 0)
+                    frag_dist[rec->core.isize]++;
+            }
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
@@ -812,6 +839,11 @@ int main(int argc, const char** argv) {
                 }
             }
         }
+    }
+    if(print_frag_dist) {
+        if(ptid != -1)
+            print_frag_distribution(hdr->target_name[ptid], hdr->target_len[ptid], &frag_dist, fragdist_fd);
+        fclose(fragdist_fd);
     }
     if(compute_coverage) {
         if(ptid != -1) {
