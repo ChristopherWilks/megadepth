@@ -12,6 +12,8 @@ cd /code
 
 set -x
 
+export LD_LIBRARY_PATH=/code/libBigWig:/code/htslib
+
 DR=build-release-temp
 mkdir -p ${DR}
 pushd ${DR}

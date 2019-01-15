@@ -14,5 +14,4 @@ if(CMAKE_THREAD_LIBS_INIT)
     target_link_libraries(bamcount "${CMAKE_THREAD_LIBS_INIT}")
 endif()
 
-#target_link_libraries(bamcount z ${CMAKE_SOURCE_DIR}/htslib/libhts.a)
 target_link_libraries(bamcount z hts BigWig -L${CMAKE_SOURCE_DIR}/htslib -L${CMAKE_SOURCE_DIR}/libBigWig)
