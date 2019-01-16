@@ -83,9 +83,17 @@ static bool has_option(const char** begin, const char** end, const std::string& 
     return std::find(begin, end, option) != end;
 }
 
-static const char** get_option(const char** begin, const char** end, const std::string& option) {
+/**
+ * Return the argument after the given one, (or further downstream when shift > 0).
+ */
+static const char** get_option(
+        const char** begin,
+        const char** end,
+        const std::string& option,
+        unsigned shift = 0)
+{
     const char** itr = std::find(begin, end, option);
-    return ++itr;
+    return itr + shift + 1;
 }
 
 /**
@@ -702,14 +710,23 @@ int main(int argc, const char** argv) {
         if(has_option(argv, argv+argc, "--annotation")) {
             sum_annotation = true;
             const char* afile = *(get_option(argv, argv+argc, "--annotation"));
+            if(!afile) {
+                std::cerr << "No argument to --annotation" << std::endl;
+                return 1;
+            }
+            const char* prefix = *(get_option(argv, argv+argc, "--annotation", 1));
+            if(!prefix) {
+                std::cerr << "No argument to --annotation" << std::endl;
+                return 1;
+            }
             afp = fopen(afile, "r");
             err = read_annotation(afp, &annotations);
             fclose(afp);
             char afn[1024];
-            sprintf(afn, "%s.annot_sums.tsv", bam_arg);
+            sprintf(afn, "%s.all.tsv", prefix);
             afp = fopen(afn, "w");
             if(ubwfp) {
-                sprintf(afn, "%s.annot_sums.unique.tsv", bam_arg);
+                sprintf(afn, "%s.unique.tsv", prefix);
                 uafp = fopen(afn, "w");
             }
             assert(!annotations.empty());
