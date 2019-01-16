@@ -24,7 +24,6 @@ static const int END_COL=2;
 //1MB per line should be more than enough for CIO
 static const int LINE_BUFFER_LENGTH=1048576;
 static const int BIGWIG_INIT_VAL = 17;
-static const int BW_UNIQUE_MIN_QUAL = 10;
 
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
@@ -32,30 +31,32 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  bamcount <bam> [options]\n"
     "\n"
     "Options:\n"
-    "  -h --help           Show this screen.\n"
-    "  --version           Show version.\n"
-    "  --read-ends         Print counts of read starts/ends\n"
-    "  --frag-dist         Print fragment length distribution per chromosome\n"
-    "  --coverage          Print per-base coverage (slow but totally worth it)\n"
-    "   --bigwig            Output coverage as a BigWig file (requires libBigWig library)\n"
-    "   --annotation        Path to BED file containing list of regions to sum coverage over\n"
+    "  -h --help            Show this screen.\n"
+    "  --version            Show version.\n"
+    "  --read-ends          Print counts of read starts/ends\n"
+    "  --frag-dist          Print fragment length distribution per chromosome\n"
+    "  --coverage           Print per-base coverage (slow but totally worth it)\n"
+    "  --bigwig <prefix>    Output coverage as BigWig file(s).  Writes to <prefix>.all.bw\n"
+    "                       (also <prefix>.unique.bw when --min-unique-qual is specified).\n"
+    "                       Requires libBigWig.\n"
+    "  --annotation         Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
-    "   --min-unique-qual   Output a second coverage stream requiring at least this mapping quality\n"
-    "                       (assumes --bigwig is being passed in).\n"
-    "                       Will also produce a second stream of annotation sums based on this coverage\n"
-   "                        if --annotation is enabled\n"
-    "  --alts              Print differing from ref per-base coverages\n"
-    "   --include-softclip  Print a record for soft-clipped bases\n"
-    "   --include-n         Print mismatch records when mismatched read base is N\n"
-    "   --print-qual        Print quality values for mismatched bases\n"
-    "   --delta             Print POS field as +/- delta from previous\n"
-    "   --require-mdz       Quit with error unless MD:Z field exists everywhere it's\n"
+    "  --min-unique-qual <int>   Output second bigWig consisting built only from alignments\n"
+    "                       with at least this mapping quality.  --bigwig must be specified.\n"
+    "                       Also produces second set of annotation sums based on this coverage\n"
+    "                       if --annotation is enabled\n"
+    "  --alts               Print differing from ref per-base coverages\n"
+    "  --include-softclip   Print a record for soft-clipped bases\n"
+    "  --include-n          Print mismatch records when mismatched read base is N\n"
+    "  --print-qual         Print quality values for mismatched bases\n"
+    "  --delta              Print POS field as +/- delta from previous\n"
+    "  --require-mdz        Quit with error unless MD:Z field exists everywhere it's\n"
     "                       expected\n"
-    "  --no-head           Don't print sequence names and lengths in header\n"
-    "  --echo-sam          Print a SAM record for each aligned read\n"
-    "  --threads           # of threads to do BAM decompression\n"
-    "  --double-count      Allow overlapping ends of PE read to count twice toward\n"
-    "                      coverage\n"
+    "  --no-head            Don't print sequence names and lengths in header\n"
+    "  --echo-sam           Print a SAM record for each aligned read\n"
+    "  --threads            # of threads to do BAM decompression\n"
+    "  --double-count       Allow overlapping ends of PE read to count twice toward\n"
+    "                       coverage\n"
     "\n";
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -457,12 +458,10 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                         const int min_qual, read2len* overlapping_mates) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
-    int32_t pos = refpos;
     int32_t algn_end_pos = refpos;
     const uint32_t* cigar = bam_get_cigar(rec);
     int k, z;
     //check for overlapping mate and corect double counting if exists
-    int32_t mate_end = -1;
     char* qname = bam_get_qname(rec);
     bool unique = min_qual > 0;
     bool passing_qual = rec->core.qual >= min_qual;
@@ -503,12 +502,12 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 	char* line_copy = strdup(line);
 	char* tok = strtok(line_copy, delim);
 	int i = 0;
-	char* chrm;
-    long start;
-    long end;
+	char* chrm = nullptr;
+    long start = -1;
+    long end = -1;
     int ret = 0;
 	int last_col = END_COL;
-	while(tok != NULL) {
+	while(tok != nullptr) {
 		if(i > last_col)
 			break;
 		if(i == CHRM_COL) {
@@ -519,13 +518,13 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 		if(i == END_COL)
 			end = atol(tok);
 		i++;
-		tok = strtok(NULL,delim);
+		tok = strtok(nullptr, delim);
 	}
     long* coords = new long(2);
     coords[0] = start;
     coords[1] = end;
     if(amap->find(chrm) == amap->end()) {
-        std::vector<long*>* v = new std::vector<long*>();
+        auto* v = new std::vector<long*>();
         (*amap)[chrm] = v;
     }
     (*amap)[chrm]->push_back(coords);
@@ -541,7 +540,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
 	size_t length = LINE_BUFFER_LENGTH;
 	assert(fin);
 	ssize_t bytes_read = getline(&line, &length, fin);
-	int err;
+	int err = 0;
 	while(bytes_read != -1) {
 	    err = process_region_line(strdup(line), "\t", amap);
         assert(err==0);
@@ -566,27 +565,27 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
 }
 
 static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp) {
-    for(auto itr = annotations->begin(); itr != annotations->end(); ++itr) {
-        if(annotations_seen->find(itr->first) == annotations_seen->end()) {
+    for(auto const& kv : *annotations) {
+        if(annotations_seen->find(kv.first) == annotations_seen->end()) {
             long z;
-            std::vector<long*>* annotations_for_chr = itr->second;
+            std::vector<long*>* annotations_for_chr = kv.second;
             for(z = 0; z < annotations_for_chr->size(); z++) {
                 long start = (*annotations_for_chr)[z][0];
                 long end = (*annotations_for_chr)[z][1];
-                fprintf(ofp, "%s\t%lu\t%lu\t0\n", itr->first.c_str(), start, end);
+                fprintf(ofp, "%s\t%lu\t%lu\t0\n", kv.first.c_str(), start, end);
             }
         }
     }
 }
-            
-static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* bam_fn) {
+
+static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn, const char *suffix) {
     if(bwInit(1<<BIGWIG_INIT_VAL) != 0) {
         fprintf(stderr, "Failed when calling bwInit with %d init val\n", BIGWIG_INIT_VAL);
         exit(-1);
     }
     char fn[1024] = "";
-    sprintf(fn, "%s.bw", bam_fn);
-    bigWigFile_t* bwfp = bwOpen(fn, NULL, "w");
+    sprintf(fn, "%s.%s", out_fn, suffix);
+    bigWigFile_t* bwfp = bwOpen(fn, nullptr, "w");
     if(!bwfp) {
         fprintf(stderr, "Failed when attempting to open BigWig file %s for writing\n", fn);
         exit(-1);
@@ -597,12 +596,12 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* bam_fn
     bwWriteHdr(bwfp);
     return bwfp;
 }
-                        
+
 typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
-static void print_frag_distribution(const char* chrm, const long arr_sz, const fraglen2count* frag_dist, FILE* outfn) 
+static void print_frag_distribution(const char* chrm, const fraglen2count* frag_dist, FILE* outfn) 
 {
-    for(auto itr = frag_dist->begin(); itr != frag_dist->end(); ++itr)
-        fprintf(outfn, "%s\t%d\t%u\n", chrm, itr->first, itr->second);
+    for(auto kv: *frag_dist)
+        fprintf(outfn, "%s\t%d\t%u\n", chrm, kv.first, kv.second);
 }
 
 int main(int argc, const char** argv) {
@@ -661,31 +660,31 @@ int main(int argc, const char** argv) {
     //largest human chromosome is ~249M bases
     //long chr_size = 250000000;
     long chr_size = -1;
-    uint32_t* coverages;
-    uint32_t* unique_coverages;
-    uint8_t* annotation_tracking;
+    uint32_t* coverages = nullptr;
+    uint32_t* unique_coverages = nullptr;
     bool compute_coverage = false;
     bool sum_annotation = false;
     bool unique = false;
     int bw_unique_min_qual = 0;
-    FILE* afp = NULL;
-    FILE* uafp = NULL;
+    FILE* afp = nullptr;
+    FILE* uafp = nullptr;
     read2len overlapping_mates;
-    bigWigFile_t *bwfp = NULL;
-    bigWigFile_t *ubwfp = NULL;
+    bigWigFile_t *bwfp = nullptr;
+    bigWigFile_t *ubwfp = nullptr;
     annotation_map_t annotations; 
     std::unordered_map<std::string, bool> annotation_chrs_seen;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
-        if(has_option(argv, argv+argc, "--bigwig"))
-            bwfp = create_bigwig_file(hdr, bam_arg);
+        if(has_option(argv, argv+argc, "--bigwig")) {
+            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
+            bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
+        }
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
+            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             unique = true;
-            char ufn[1024];
-            sprintf(ufn, "%s.unique", bam_arg);
-            ubwfp = create_bigwig_file(hdr, ufn);
+            ubwfp = create_bigwig_file(hdr, bw_fn, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
@@ -694,7 +693,6 @@ int main(int argc, const char** argv) {
         int err = 0;
         if(has_option(argv, argv+argc, "--annotation")) {
             sum_annotation = true;
-            annotation_tracking = new uint8_t[chr_size];
             const char* afile = *(get_option(argv, argv+argc, "--annotation"));
             afp = fopen(afile, "r");
             err = read_annotation(afp, &annotations);
@@ -706,15 +704,15 @@ int main(int argc, const char** argv) {
                 sprintf(afn, "%s.annot_sums.unique.tsv", bam_arg);
                 uafp = fopen(afn, "w");
             }
-            assert(annotations.size() > 0);
+            assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
         }
         assert(err == 0);
     }
     char prefix[50]="";
     int32_t ptid = -1;
-    uint32_t* starts;
-    uint32_t* ends;
+    uint32_t* starts = nullptr;
+    uint32_t* ends = nullptr;
     bool compute_ends = false;
     if(has_option(argv, argv+argc, "--read-ends")) {
         compute_ends = true;
@@ -725,7 +723,7 @@ int main(int argc, const char** argv) {
     }
     bool print_frag_dist = false;
     fraglen2count frag_dist;
-    FILE* fragdist_fd = NULL;
+    FILE* fragdist_fd = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
         print_frag_dist = true;
         char fdfn[1024];
@@ -748,7 +746,7 @@ int main(int argc, const char** argv) {
             if(print_frag_dist) {
                 if(tid != ptid) {
                     if(ptid != -1) {
-                        print_frag_distribution(hdr->target_name[ptid], hdr->target_len[ptid], &frag_dist, fragdist_fd);
+                        print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
                         frag_dist.clear();
                     }
                 }
@@ -786,9 +784,9 @@ int main(int argc, const char** argv) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         sprintf(prefix, "start\t%d", ptid);
-                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, NULL);
+                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, nullptr);
                         sprintf(prefix, "end\t%d", ptid);
-                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, NULL);
+                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, nullptr);
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
@@ -842,7 +840,7 @@ int main(int argc, const char** argv) {
     }
     if(print_frag_dist) {
         if(ptid != -1)
-            print_frag_distribution(hdr->target_name[ptid], hdr->target_len[ptid], &frag_dist, fragdist_fd);
+            print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
         fclose(fragdist_fd);
     }
     if(compute_coverage) {
@@ -858,27 +856,27 @@ int main(int argc, const char** argv) {
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
         }
-        delete coverages;
+        delete[] coverages;
         if(unique)
-            delete unique_coverages;
+            delete[] unique_coverages;
         if(sum_annotation) {
             output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(unique)
                 output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
         }
-        fprintf(stderr, "All AUC\t%lu\n", all_auc);
+        fprintf(stderr, "All AUC\t%" PRIu64 "\n", all_auc);
         if(unique)
-            fprintf(stderr, "Unique AUC\t%lu\n", unique_auc);
+            fprintf(stderr, "Unique AUC\t%" PRIu64 "\n", unique_auc);
     }
     if(compute_ends) {
         if(ptid != -1) {
             sprintf(prefix, "start\t%d", ptid);
-            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, NULL);
+            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, nullptr);
             sprintf(prefix, "end\t%d", ptid);
-            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, NULL);
+            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, nullptr);
         }
-        delete starts;
-        delete ends;
+        delete[] starts;
+        delete[] ends;
     }
     if(bwfp) {
         bwClose(bwfp);
