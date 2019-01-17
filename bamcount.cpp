@@ -305,7 +305,7 @@ static void output_from_cigar_mdz(
                             std::cout << ',';
                             cstr_substring(std::cout, qual, seq_off, (size_t)run_comb);
                         }
-                        std::cout << std::endl;
+                        std::cout << '\n';
                     }
                 }
                 seq_off += run_comb;
@@ -319,12 +319,12 @@ static void output_from_cigar_mdz(
             }
         } else if(op == BAM_CINS) {
             std::cout << rec->core.tid << ',' << ref_off << ",I,";
-            seq_substring(std::cout, seq, seq_off, (size_t)run) << std::endl;
+            seq_substring(std::cout, seq, seq_off, (size_t)run) << '\n';
             seq_off += run;
         } else if(op == BAM_CSOFT_CLIP) {
             if(include_ss) {
                 std::cout << rec->core.tid << ',' << ref_off << ",S,";
-                seq_substring(std::cout, seq, seq_off, (size_t)run) << std::endl;
+                seq_substring(std::cout, seq, seq_off, (size_t)run) << '\n';
                 seq_off += run;
             }
         } else if (op == BAM_CDEL) {
@@ -332,7 +332,7 @@ static void output_from_cigar_mdz(
             assert(run == mdz[mdzi].run);
             assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
-            std::cout << rec->core.tid << ',' << ref_off << ",D," << run << std::endl;
+            std::cout << rec->core.tid << ',' << ref_off << ",D," << run << '\n';
             ref_off += run;
         } else if (op == BAM_CREF_SKIP) {
             ref_off += run;
@@ -487,15 +487,26 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
         for(z = refpos; z < mate_end_pos; z++)
             unique_coverages[z]++;
     }
-    for (k = 0; k < rec->core.n_cigar; ++k) {
-        if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
-            int32_t len = bam_cigar_oplen(cigar[k]);
-            for(z = algn_end_pos; z < algn_end_pos + len; z++) {
-                coverages[z]++;
-                if(unique && passing_qual)
+    if(unique && passing_qual) {
+        for (k = 0; k < rec->core.n_cigar; ++k) {
+            if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
+                const int32_t len = bam_cigar_oplen(cigar[k]);
+                for(z = algn_end_pos; z < algn_end_pos + len; z++) {
+                    coverages[z]++;
                     unique_coverages[z]++;
+                }
+                algn_end_pos += len;
             }
-            algn_end_pos += len;
+        }
+    } else {
+        for (k = 0; k < rec->core.n_cigar; ++k) {
+            if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
+                const int32_t len = bam_cigar_oplen(cigar[k]);
+                for(z = algn_end_pos; z < algn_end_pos + len; z++) {
+                    coverages[z]++;
+                }
+                algn_end_pos += len;
+            }
         }
     }
     //fix paired mate overlap double counting
@@ -626,6 +637,7 @@ int main(int argc, const char** argv) {
         std::cout << USAGE << std::endl;
         return 0;
     }
+    std::ios::sync_with_stdio(false);
     const char *bam_arg = get_positional_n(argv, argv+argc, 0);
     if(!bam_arg) {
         std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
@@ -831,7 +843,7 @@ int main(int argc, const char** argv) {
                     return 1;
                 }
                 kstring_out(std::cout, &sambuf);
-                std::cout << std::endl;
+                std::cout << '\n';
             }
             //track alt. base coverages
             if(compute_alts) {
