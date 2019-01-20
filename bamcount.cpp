@@ -577,7 +577,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -587,6 +587,7 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
             assert(j < chr_size);
             sum += coverages[j];
         }
+        (*annotated_auc) = (*annotated_auc) + sum;
         fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
     }
 }
@@ -701,6 +702,8 @@ int main(int argc, const char** argv) {
     bigWigFile_t *ubwfp = nullptr;
     annotation_map_t annotations; 
     std::unordered_map<std::string, bool> annotation_chrs_seen;
+    uint64_t annotated_auc = 0;
+    uint64_t unique_annotated_auc = 0;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -802,9 +805,9 @@ int main(int argc, const char** argv) {
                             unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
                             if(unique)
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp);
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc);
                             annotation_chrs_seen[hdr->target_name[ptid]] = true;
                         }
                     }
@@ -887,12 +890,15 @@ int main(int argc, const char** argv) {
             if(unique)
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp);
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
                 if(unique)
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp);
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc);
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
         }
+        fprintf(stderr, "All Annotated AUC\t%" PRIu64 "\n", annotated_auc);
+        if(unique)
+            fprintf(stderr, "Unique Annotated AUC\t%" PRIu64 "\n", unique_annotated_auc);
         delete[] coverages;
         if(unique)
             delete[] unique_coverages;
