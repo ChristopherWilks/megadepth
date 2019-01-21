@@ -471,7 +471,8 @@ static const int32_t align_length(const bam1_t *rec) {
 typedef std::unordered_map<std::string, int32_t> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
-                                        const int min_qual, read2len* overlapping_mates) {
+                                        const int min_qual, read2len* overlapping_mates,
+                                        uint32_t* total_intron_length) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t algn_end_pos = refpos;
@@ -482,35 +483,46 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     bool unique = min_qual > 0;
     bool passing_qual = rec->core.qual >= min_qual;
     //need to fix double counting if one mate was unique and the later one was not
-    if(!double_count && unique && !passing_qual && overlapping_mates->find(qname) != overlapping_mates->end()) {
+    if(unique_coverages && !double_count && unique && !passing_qual && overlapping_mates->find(qname) != overlapping_mates->end()) {
         int32_t mate_end_pos = (*overlapping_mates)[qname];
         for(z = refpos; z < mate_end_pos; z++)
             unique_coverages[z]++;
     }
     if(unique && passing_qual) {
         for (k = 0; k < rec->core.n_cigar; ++k) {
-            if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
+            const int cigar_op = bam_cigar_op(cigar[k]);
+            if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
-                for(z = algn_end_pos; z < algn_end_pos + len; z++) {
-                    coverages[z]++;
-                    unique_coverages[z]++;
+                if(cigar_op & BAM_CREF_SKIP != 0)
+                    (*total_intron_length) = (*total_intron_length) + len;
+                if(coverages) {
+                    for(z = algn_end_pos; z < algn_end_pos + len; z++) {
+                        coverages[z]++;
+                        unique_coverages[z]++;
+                    }
                 }
                 algn_end_pos += len;
             }
         }
     } else {
         for (k = 0; k < rec->core.n_cigar; ++k) {
-            if(bam_cigar_type(bam_cigar_op(cigar[k]))&2) {
+            const int cigar_op = bam_cigar_op(cigar[k]);
+            if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
-                for(z = algn_end_pos; z < algn_end_pos + len; z++) {
-                    coverages[z]++;
+                if(cigar_op & BAM_CREF_SKIP != 0)
+                    (*total_intron_length) = (*total_intron_length) + len;
+                if(coverages) {
+                    for(z = algn_end_pos; z < algn_end_pos + len; z++) {
+                        coverages[z]++;
+                    }
                 }
                 algn_end_pos += len;
             }
         }
     }
     //fix paired mate overlap double counting
-    if(!double_count && rec->core.tid == rec->core.mtid && (rec->core.flag & BAM_FPROPER_PAIR) == 2
+    if(coverages && !double_count && rec->core.tid == rec->core.mtid
+            && (rec->core.flag & BAM_FPROPER_PAIR) == 2
             && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos) {
         if(unique && passing_qual)
             (*overlapping_mates)[qname] = algn_end_pos;
@@ -779,21 +791,10 @@ int main(int argc, const char** argv) {
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
+        uint32_t total_intron_len = 0;
         if((c->flag & BAM_FUNMAP) == 0) {
             int32_t tid = rec->core.tid;
             int32_t end_refpos = -1;
-            //track fragment lengths per chromosome
-            if(print_frag_dist) {
-                if(tid != ptid) {
-                    if(ptid != -1) {
-                        print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
-                        frag_dist.clear();
-                    }
-                }
-                //only count positive insert sizes
-                if(rec->core.isize >= 0)
-                    frag_dist[rec->core.isize]++;
-            }
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
@@ -815,7 +816,24 @@ int main(int argc, const char** argv) {
                     if(unique)
                         reset_array(unique_coverages, chr_size);
                 }
-                end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates);
+                end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len);
+            }
+            //track fragment lengths per chromosome
+            if(print_frag_dist) {
+                if(tid != ptid) {
+                    if(ptid != -1) {
+                        print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
+                        frag_dist.clear();
+                    }
+                }
+                //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
+                if(!compute_coverage)
+                    calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
+                //only count the first segment's (mate) fragment length if paired
+                if(c->flag & BAM_FREAD1 != 0 && c->flag & BAM_FPAIRED != 0) {
+                    assert(total_intron_len <= abs(rec->core.isize));
+                    frag_dist[abs(rec->core.isize)-total_intron_len]++;
+                }
             }
 
             //track read starts/ends
