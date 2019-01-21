@@ -493,7 +493,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             const int cigar_op = bam_cigar_op(cigar[k]);
             if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
-                if(cigar_op & BAM_CREF_SKIP != 0)
+                if(cigar_op == BAM_CREF_SKIP)
                     (*total_intron_length) = (*total_intron_length) + len;
                 if(coverages) {
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
@@ -509,7 +509,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             const int cigar_op = bam_cigar_op(cigar[k]);
             if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
-                if(cigar_op & BAM_CREF_SKIP != 0)
+                if(cigar_op == BAM_CREF_SKIP)
                     (*total_intron_length) = (*total_intron_length) + len;
                 if(coverages) {
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
@@ -638,10 +638,10 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn
 }
 
 typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
-static void print_frag_distribution(const char* chrm, const fraglen2count* frag_dist, FILE* outfn) 
+static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn) 
 {
     for(auto kv: *frag_dist)
-        fprintf(outfn, "%s\t%d\t%u\n", chrm, kv.first, kv.second);
+        fprintf(outfn, "%d\t%u\n", kv.first, kv.second);
 }
 
 int main(int argc, const char** argv) {
@@ -820,17 +820,11 @@ int main(int argc, const char** argv) {
             }
             //track fragment lengths per chromosome
             if(print_frag_dist) {
-                if(tid != ptid) {
-                    if(ptid != -1) {
-                        print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
-                        frag_dist.clear();
-                    }
-                }
                 //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
                 if(!compute_coverage)
                     calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
                 //only count the first segment's (mate) fragment length if paired
-                if(c->flag & BAM_FREAD1 != 0 && c->flag & BAM_FPAIRED != 0) {
+                if((c->flag & BAM_FREAD1) != 0 && (c->flag & BAM_FPAIRED) != 0) {
                     assert(total_intron_len <= abs(rec->core.isize));
                     frag_dist[abs(rec->core.isize)-total_intron_len]++;
                 }
@@ -898,7 +892,7 @@ int main(int argc, const char** argv) {
     }
     if(print_frag_dist) {
         if(ptid != -1)
-            print_frag_distribution(hdr->target_name[ptid], &frag_dist, fragdist_fd);
+            print_frag_distribution(&frag_dist, fragdist_fd);
         fclose(fragdist_fd);
     }
     if(compute_coverage) {
