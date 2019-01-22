@@ -472,7 +472,7 @@ typedef std::unordered_map<std::string, int32_t> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
-                                        uint32_t* total_intron_length) {
+                                        int32_t* total_intron_length) {
     int32_t refpos = rec->core.pos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t algn_end_pos = refpos;
@@ -644,6 +644,9 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
         fprintf(outfn, "%d\t%u\n", kv.first, kv.second);
 }
 
+typedef std::unordered_map<std::string, uint64_t> mate2len;
+static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
+static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
     if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
@@ -775,6 +778,7 @@ int main(int argc, const char** argv) {
     }
     bool print_frag_dist = false;
     fraglen2count frag_dist;
+    mate2len frag_mates;
     FILE* fragdist_fd = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
         print_frag_dist = true;
@@ -791,10 +795,10 @@ int main(int argc, const char** argv) {
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
-        uint32_t total_intron_len = 0;
+        int32_t total_intron_len = 0;
+        int32_t tid = rec->core.tid;
+        int32_t end_refpos = -1;
         if((c->flag & BAM_FUNMAP) == 0) {
-            int32_t tid = rec->core.tid;
-            int32_t end_refpos = -1;
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
@@ -818,17 +822,6 @@ int main(int argc, const char** argv) {
                 }
                 end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len);
             }
-            //track fragment lengths per chromosome
-            if(print_frag_dist) {
-                //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
-                if(!compute_coverage)
-                    calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
-                //only count the first segment's (mate) fragment length if paired
-                if((c->flag & BAM_FREAD1) != 0 && (c->flag & BAM_FPAIRED) != 0) {
-                    assert(total_intron_len <= abs(rec->core.isize));
-                    frag_dist[abs(rec->core.isize)-total_intron_len]++;
-                }
-            }
 
             //track read starts/ends
             if(compute_ends) {
@@ -848,7 +841,6 @@ int main(int argc, const char** argv) {
                     end_refpos = refpos + align_length(rec) - 1;
                 ends[end_refpos]++;
             }
-            ptid = tid;
 
             //echo back the sam record
             if(echo_sam) {
@@ -889,6 +881,42 @@ int main(int argc, const char** argv) {
                 }
             }
         }
+        //track fragment lengths per chromosome
+        if(print_frag_dist) {
+            //csaw's getPESizes criteria
+            //first, don't count read that's got problems
+            if((c->flag & BAM_FSECONDARY) == 0 && (c->flag & BAM_FSUPPLEMENTARY) == 0 && 
+                    (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
+                    ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
+                //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
+                if(!compute_coverage)
+                    end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
+                //are we the later mate? if so we calculate the frag length
+                int32_t refpos = rec->core.pos;
+                int32_t mrefpos = rec->core.mpos;
+                char* qname = bam_get_qname(rec);
+                if(frag_mates.find(qname) != frag_mates.end()) {
+                    uint64_t both_lens = frag_mates[qname];
+                    int32_t both_intron_lengths = both_lens & frag_lens_mask;
+                    both_lens = both_lens >> FRAG_LEN_BITLEN;
+                    int32_t mreflen = both_lens & frag_lens_mask;
+                    frag_mates.erase(qname);
+                    if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
+                            (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
+                        assert(both_intron_lengths <= abs(rec->core.isize));
+                        frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
+                    }
+                }
+                else {
+                    uint64_t both_lens = end_refpos - refpos;
+                    both_lens = both_lens << FRAG_LEN_BITLEN;
+                    both_lens |= total_intron_len;
+                    frag_mates[qname] = both_lens;
+                }
+            }
+        }
+        if(tid != -1)
+            ptid = tid;
     }
     if(print_frag_dist) {
         if(ptid != -1)
