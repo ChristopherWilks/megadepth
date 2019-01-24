@@ -63,7 +63,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Other outputs:\n"
     "  --read-ends          Print counts of read starts/ends\n"
-    "  --frag-dist          Print fragment length distribution per chromosome\n"
+    "  --frag-dist          Print fragment length distribution across the genome\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
     "\n";
 
@@ -173,93 +173,6 @@ static void parse_mdz(
         }
     }
 }
-
-#if 0
-/**
- * Prints a stacked version of an alignment
- */
-static void cigar_mdz_to_stacked(
-        const BamAlignmentRecord& rec,
-        vector<tuple<char, int, CharString>>& mdz,
-        IupacString& rds,
-        IupacString& rfs)
-{
-    const IupacString& seq{rec.seq};
-    size_t mdz_off = 0, seq_off = 0;
-    for (CigarElement<> e : rec.cigar) {
-        const char &op = e.operation;
-        bool ref_consuming = (strchr("DNMX=", op) != nullptr);
-        if(ref_consuming && mdz_off >= mdz.size()) {
-            stringstream ss;
-            ss << "Found read-consuming CIGAR op after MD:Z had been exhausted" << endl;
-            throw std::runtime_error(ss.str());
-        }
-        if (op == 'M' || op == 'X' || op == '=') {
-            // Look for block matches and mismatches in MD:Z string
-            size_t runleft = e.count;
-            while (runleft > 0 && mdz_off < mdz.size()) {
-                char mdz_op;
-                size_t mdz_run;
-                CharString mdz_str;
-                std::tie(mdz_op, mdz_run, mdz_str) = mdz[mdz_off];
-                size_t run_comb = std::min(runleft, mdz_run);
-                runleft -= run_comb;
-                assert(mdz_op == 'X' or mdz_op == '=');
-                append(rds, infix(seq, seq_off, seq_off + run_comb));
-                if (mdz_op == '=') {
-                    append(rfs, infix(seq, seq_off, seq_off + run_comb));
-                } else {
-                    assert(length(mdz_str) == run_comb);
-                    append(rfs, mdz_str);
-                }
-                seq_off += run_comb;
-                if (run_comb < mdz_run) {
-                    assert(mdz_op == '=');
-                    get<1>(mdz[mdz_off]) -= run_comb;
-                } else {
-                    mdz_off++;
-                }
-            }
-        } else if (op == 'I') {
-            append(rds, infix(seq, seq_off, seq_off + e.count));
-            for (size_t i = 0; i < e.count; i++) {
-                append(rfs, '-');
-            }
-        } else if (op == 'D') {
-            char mdz_op;
-            size_t mdz_run;
-            CharString mdz_str;
-            std::tie(mdz_op, mdz_run, mdz_str) = mdz[mdz_off];
-            assert(mdz_op == '^');
-            assert(e.count == mdz_run);
-            assert(length(mdz_str) == e.count);
-            mdz_off++;
-            for (size_t i = 0; i < e.count; i++) {
-                append(rds, '-');
-            }
-            append(rfs, mdz_run);
-        } else if (op == 'N') {
-            for (size_t i = 0; i < e.count; i++) {
-                append(rds, '-');
-                append(rfs, '-');
-            }
-        } else if (op == 'S') {
-            append(rds, infix(seq, seq_off, seq_off + e.count));
-            for (size_t i = 0; i < e.count; i++) {
-                append(rfs, '-');
-            }
-            seq_off += e.count;
-        } else if (op == 'H') {
-        } else if (op == 'P') {
-        } else {
-            stringstream ss;
-            ss << "No such CIGAR operation as \"" << op << "\"";
-            throw std::runtime_error(ss.str());
-        }
-    }
-    assert(mdz_off == mdz.size());
-}
-#endif
 
 static void output_from_cigar_mdz(
         const bam1_t *rec,
@@ -795,10 +708,10 @@ int main(int argc, const char** argv) {
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
-        int32_t total_intron_len = 0;
-        int32_t tid = rec->core.tid;
-        int32_t end_refpos = -1;
         if((c->flag & BAM_FUNMAP) == 0) {
+            int32_t total_intron_len = 0;
+            int32_t tid = rec->core.tid;
+            int32_t end_refpos = -1;
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
@@ -823,6 +736,42 @@ int main(int argc, const char** argv) {
                 end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len);
             }
 
+            //track fragment lengths per chromosome
+            if(print_frag_dist) {
+                //csaw's getPESizes criteria
+                //first, don't count read that's got problems
+                if((c->flag & BAM_FSECONDARY) == 0 && (c->flag & BAM_FSUPPLEMENTARY) == 0 && 
+                        (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
+                        ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
+                    //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
+                    if(!compute_coverage)
+                        end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
+                    //are we the later mate? if so we calculate the frag length
+                    int32_t refpos = rec->core.pos;
+                    int32_t mrefpos = rec->core.mpos;
+                    char* qname = bam_get_qname(rec);
+                    if(frag_mates.find(qname) != frag_mates.end()) {
+                        uint64_t both_lens = frag_mates[qname];
+                        int32_t both_intron_lengths = both_lens & frag_lens_mask;
+                        both_lens = both_lens >> FRAG_LEN_BITLEN;
+                        int32_t mreflen = both_lens & frag_lens_mask;
+                        frag_mates.erase(qname);
+                        if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
+                                (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
+                            assert(both_intron_lengths <= abs(rec->core.isize));
+                            //frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
+                            frag_dist[abs(rec->core.isize)]++;
+                        }
+                    }
+                    else {
+                        uint64_t both_lens = end_refpos - refpos;
+                        both_lens = both_lens << FRAG_LEN_BITLEN;
+                        both_lens |= total_intron_len;
+                        frag_mates[qname] = both_lens;
+                    }
+                }
+            }
+
             //track read starts/ends
             if(compute_ends) {
                 int32_t refpos = rec->core.pos;
@@ -841,6 +790,7 @@ int main(int argc, const char** argv) {
                     end_refpos = refpos + align_length(rec) - 1;
                 ends[end_refpos]++;
             }
+            ptid = tid;
 
             //echo back the sam record
             if(echo_sam) {
@@ -881,42 +831,6 @@ int main(int argc, const char** argv) {
                 }
             }
         }
-        //track fragment lengths per chromosome
-        if(print_frag_dist) {
-            //csaw's getPESizes criteria
-            //first, don't count read that's got problems
-            if((c->flag & BAM_FSECONDARY) == 0 && (c->flag & BAM_FSUPPLEMENTARY) == 0 && 
-                    (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
-                    ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
-                //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
-                if(!compute_coverage)
-                    end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
-                //are we the later mate? if so we calculate the frag length
-                int32_t refpos = rec->core.pos;
-                int32_t mrefpos = rec->core.mpos;
-                char* qname = bam_get_qname(rec);
-                if(frag_mates.find(qname) != frag_mates.end()) {
-                    uint64_t both_lens = frag_mates[qname];
-                    int32_t both_intron_lengths = both_lens & frag_lens_mask;
-                    both_lens = both_lens >> FRAG_LEN_BITLEN;
-                    int32_t mreflen = both_lens & frag_lens_mask;
-                    frag_mates.erase(qname);
-                    if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
-                            (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
-                        assert(both_intron_lengths <= abs(rec->core.isize));
-                        frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
-                    }
-                }
-                else {
-                    uint64_t both_lens = end_refpos - refpos;
-                    both_lens = both_lens << FRAG_LEN_BITLEN;
-                    both_lens |= total_intron_len;
-                    frag_mates[qname] = both_lens;
-                }
-            }
-        }
-        if(tid != -1)
-            ptid = tid;
     }
     if(print_frag_dist) {
         if(ptid != -1)
