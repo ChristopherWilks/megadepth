@@ -797,7 +797,8 @@ int main(int argc, const char** argv) {
                         frag_mates.erase(qname);
                         if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
                                 (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
-                            assert(both_intron_lengths <= abs(rec->core.isize));
+                            if(both_intron_lengths > abs(rec->core.isize))
+                                both_intron_lengths = 0;
                             frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
                         }
                     }
