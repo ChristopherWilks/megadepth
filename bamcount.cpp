@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <cassert>
+#include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <string>
@@ -36,7 +37,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --threads            # of threads to do BAM decompression\n"
     "\n"
     "Non-reference summaries:\n"
-    "  --alts               Print differing from ref per-base coverages\n"
+    "  --alts <prefix>      Print differing from ref per-base coverages\n"
+    "                       Writes to a CSV file <prefix>.alts.tsv\n"
     "  --include-softclip   Print a record for soft-clipped bases\n"
     "  --include-n          Print mismatch records when mismatched read base is N\n"
     "  --print-qual         Print quality values for mismatched bases\n"
@@ -47,6 +49,9 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Coverage and quantification:\n"
     "  --coverage           Print per-base coverage (slow but totally worth it)\n"
+    "  --auc <prefix>       Print per-base area-under-coverage, will generate it for the genome\n"
+    "                       and for the annotation if --annotation is also passed in\n"
+    "                       Writes to a TSV file <prefix>.auc.tsv\n"
     "  --bigwig <prefix>    Output coverage as BigWig file(s).  Writes to <prefix>.all.bw\n"
     "                       (also <prefix>.unique.bw when --min-unique-qual is specified).\n"
     "                       Requires libBigWig.\n"
@@ -63,7 +68,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Other outputs:\n"
     "  --read-ends          Print counts of read starts/ends\n"
-    "  --frag-dist          Print fragment length distribution across the genome\n"
+    "  --frag-dist <prefix> Print fragment length distribution across the genome\n"
+    "                       Writes to a TSV file <prefix>.frags.tsv\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
     "\n";
 
@@ -177,6 +183,7 @@ static void parse_mdz(
 static void output_from_cigar_mdz(
         const bam1_t *rec,
         std::vector<MdzOp>& mdz,
+        std::fstream& fout,
         bool print_qual = false,
         bool include_ss = false,
         bool include_n_mms = false,
@@ -212,13 +219,13 @@ static void output_from_cigar_mdz(
                     if(!include_n_mms && run_comb == 1 && cread == 'N') {
                         // skip
                     } else {
-                        std::cout << rec->core.tid << ',' << ref_off << ",X,";
-                        seq_substring(std::cout, seq, seq_off, (size_t)run_comb);
+                        fout << rec->core.tid << ',' << ref_off << ",X,";
+                        seq_substring(fout, seq, seq_off, (size_t)run_comb);
                         if(print_qual) {
-                            std::cout << ',';
-                            cstr_substring(std::cout, qual, seq_off, (size_t)run_comb);
+                            fout << ',';
+                            cstr_substring(fout, qual, seq_off, (size_t)run_comb);
                         }
-                        std::cout << '\n';
+                        fout << '\n';
                     }
                 }
                 seq_off += run_comb;
@@ -231,13 +238,13 @@ static void output_from_cigar_mdz(
                 }
             }
         } else if(op == BAM_CINS) {
-            std::cout << rec->core.tid << ',' << ref_off << ",I,";
-            seq_substring(std::cout, seq, seq_off, (size_t)run) << '\n';
+            fout << rec->core.tid << ',' << ref_off << ",I,";
+            seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
             seq_off += run;
         } else if(op == BAM_CSOFT_CLIP) {
             if(include_ss) {
-                std::cout << rec->core.tid << ',' << ref_off << ",S,";
-                seq_substring(std::cout, seq, seq_off, (size_t)run) << '\n';
+                fout << rec->core.tid << ',' << ref_off << ",S,";
+                seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
                 seq_off += run;
             }
         } else if (op == BAM_CDEL) {
@@ -245,7 +252,7 @@ static void output_from_cigar_mdz(
             assert(run == mdz[mdzi].run);
             assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
-            std::cout << rec->core.tid << ',' << ref_off << ",D," << run << '\n';
+            fout << rec->core.tid << ',' << ref_off << ",D," << run << '\n';
             ref_off += run;
         } else if (op == BAM_CREF_SKIP) {
             ref_off += run;
@@ -260,7 +267,7 @@ static void output_from_cigar_mdz(
     assert(mdzi == mdz.size());
 }
 
-static void output_from_cigar(const bam1_t *rec) {
+static void output_from_cigar(const bam1_t *rec, std::fstream& fout) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -274,14 +281,14 @@ static void output_from_cigar(const bam1_t *rec) {
         int run = bam_cigar_oplen(cigar[k]);
         switch(op) {
             case BAM_CDEL: {
-                std::cout << rec->core.tid << ',' << refpos << ",D," << run << std::endl;
+                fout << rec->core.tid << ',' << refpos << ",D," << run << std::endl;
                 refpos += run;
                 break;
             }
             case BAM_CSOFT_CLIP:
             case BAM_CINS: {
-                std::cout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                seq_substring(std::cout, seq, (size_t)seqpos, (size_t)run) << std::endl;
+                fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
                 seqpos += run;
                 break;
             }
@@ -553,8 +560,24 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn
 typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
 static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn) 
 {
-    for(auto kv: *frag_dist)
+    double mean = 0.0;
+    uint64_t count = 0;
+    uint64_t mode = 0;
+    uint64_t mode_count = 0;
+    for(auto kv: *frag_dist) {
         fprintf(outfn, "%d\t%u\n", kv.first, kv.second);
+        count += kv.second;
+        mean += (kv.first*kv.second);
+        if(kv.second > mode_count) {
+            mode_count = kv.second;
+            mode = kv.first;
+        }
+    }
+    mean /= count;
+    fprintf(outfn, "STAT\tCOUNT\t%lu\n", count);
+    fprintf(outfn, "STAT\tMEAN_LENGTH\t%.3f\n", mean);
+    fprintf(outfn, "STAT\tMODE_LENGTH\t%lu\n", mode);
+    fprintf(outfn, "STAT\tMODE_LENGTH_COUNT\t%lu\n", mode_count);
 }
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
@@ -632,6 +655,7 @@ int main(int argc, const char** argv) {
     std::unordered_map<std::string, bool> annotation_chrs_seen;
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
+    FILE* auc_file;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -639,6 +663,12 @@ int main(int argc, const char** argv) {
         if(has_option(argv, argv+argc, "--bigwig")) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
+        }
+        if(has_option(argv, argv+argc, "--auc")) {
+            const char *prefix = *get_option(argv, argv+argc, "--auc");
+            char afn[1024];
+            sprintf(afn, "%s.auc.tsv", prefix);
+            auc_file = fopen(afn, "w");
         }
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
@@ -692,15 +722,24 @@ int main(int argc, const char** argv) {
     bool print_frag_dist = false;
     fraglen2count frag_dist;
     mate2len frag_mates;
-    FILE* fragdist_fd = nullptr;
+    FILE* fragdist_file = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
+        const char *prefix = *get_option(argv, argv+argc, "--frag-dist");
+        char afn[1024];
+        sprintf(afn, "%s.frags.tsv", prefix);
+        fragdist_file = fopen(afn, "w");
         print_frag_dist = true;
-        char fdfn[1024];
-        sprintf(fdfn, "%s.frag_dist.tsv", bam_arg);
-        fragdist_fd = fopen(fdfn, "w");
     }
     const bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
-    const bool compute_alts = has_option(argv, argv+argc, "--alts");
+    std::fstream alts_file;
+    bool compute_alts = false;
+    if(has_option(argv, argv+argc, "--alts")) {
+        const char *prefix = *get_option(argv, argv+argc, "--alts");
+        char afn[1024];
+        sprintf(afn, "%s.alts.tsv", prefix);
+        alts_file.open(afn, std::fstream::out);
+        compute_alts = true;
+    }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     //calculates AUC automatically
     uint64_t all_auc = 0;
@@ -752,15 +791,14 @@ int main(int argc, const char** argv) {
                     char* qname = bam_get_qname(rec);
                     if(frag_mates.find(qname) != frag_mates.end()) {
                         uint64_t both_lens = frag_mates[qname];
-                        int32_t both_intron_lengths = both_lens & frag_lens_mask;
+                        int32_t both_intron_lengths = total_intron_len + (both_lens & frag_lens_mask);
                         both_lens = both_lens >> FRAG_LEN_BITLEN;
                         int32_t mreflen = both_lens & frag_lens_mask;
                         frag_mates.erase(qname);
                         if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
                                 (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
                             assert(both_intron_lengths <= abs(rec->core.isize));
-                            //frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
-                            frag_dist[abs(rec->core.isize)]++;
+                            frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
                         }
                     }
                     else {
@@ -821,21 +859,21 @@ int main(int argc, const char** argv) {
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    output_from_cigar(rec); // just use CIGAR
+                    output_from_cigar(rec, alts_file); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
                     output_from_cigar_mdz(
-                            rec, mdzbuf, print_qual,
-                            include_ss, include_n_mms); // use CIGAR and MD:Z
+                            rec, mdzbuf, alts_file, 
+                            print_qual, include_ss, include_n_mms); // use CIGAR and MD:Z
                 }
             }
         }
     }
     if(print_frag_dist) {
         if(ptid != -1)
-            print_frag_distribution(&frag_dist, fragdist_fd);
-        fclose(fragdist_fd);
+            print_frag_distribution(&frag_dist, fragdist_file);
+        fclose(fragdist_file);
     }
     if(compute_coverage) {
         if(ptid != -1) {
@@ -850,9 +888,11 @@ int main(int argc, const char** argv) {
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
         }
-        fprintf(stderr, "All Annotated AUC\t%" PRIu64 "\n", annotated_auc);
-        if(unique)
-            fprintf(stderr, "Unique Annotated AUC\t%" PRIu64 "\n", unique_annotated_auc);
+        if(sum_annotation && auc_file) {
+            fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+            if(unique)
+                fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%" PRIu64 "\n", unique_annotated_auc);
+        }
         delete[] coverages;
         if(unique)
             delete[] unique_coverages;
@@ -861,9 +901,11 @@ int main(int argc, const char** argv) {
             if(unique)
                 output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
         }
-        fprintf(stderr, "All AUC\t%" PRIu64 "\n", all_auc);
-        if(unique)
-            fprintf(stderr, "Unique AUC\t%" PRIu64 "\n", unique_auc);
+        if(auc_file) {
+            fprintf(auc_file, "ALL_READS_ALL_BASES\t%" PRIu64 "\n", all_auc);
+            if(unique)
+                fprintf(auc_file, "UNIQUE_READS_ALL_BASES\t%" PRIu64 "\n", unique_auc);
+        }
     }
     if(compute_ends) {
         if(ptid != -1) {
@@ -884,6 +926,10 @@ int main(int argc, const char** argv) {
         bwClose(ubwfp);
         bwCleanup();
     }
+    if(compute_alts && alts_file)
+        alts_file.close();
+    if(auc_file)
+        fclose(auc_file);
     if(afp)
         fclose(afp);
     if(uafp)
