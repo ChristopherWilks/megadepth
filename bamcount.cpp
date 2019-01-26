@@ -389,8 +389,6 @@ static const int32_t align_length(const bam1_t *rec) {
 }
 
 typedef std::unordered_map<std::string, uint32_t*> read2len;
-static const uint64_t MCIGAR_LENGTH_MASK = 0x00000000FFFFFFFF;
-static const int MCIGAR_LENGTH_BITLEN = 32;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
@@ -412,11 +410,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     int n_mspans = 0;
     int32_t** mspans = nullptr;
     int mspans_idx = 0;
-    char temps[1024];
-    sprintf(temps,"%s_%d_%d", qname, rec->core.pos, rec->core.mpos);
-    std::string tempname(temps);
     std::string tn(qname);
     int32_t end_pos = bam_endpos(rec);
+    uint32_t mate_passes_quality = 0;
     //-----First Mate Check
     //if we're the first mate and
     //we're avoiding double counting and we're a proper pair
@@ -428,20 +424,20 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 refpos < mrefpos) {
             const uint32_t* mcigar = bam_get_cigar(rec);
             uint32_t n_cigar = rec->core.n_cigar;
-            uint32_t* both2 = new uint32_t[n_cigar+2];
-            both2[0] = n_cigar;
-            both2[1] = refpos;
-            std::memcpy(both2+2, mcigar, 4*n_cigar);
-            char temps_[1024];
-            sprintf(temps_,"%s_%d_%d",qname, rec->core.mpos, rec->core.pos);
-            (*overlapping_mates)[tn] = both2;
+            uint32_t* mate_info = new uint32_t[n_cigar+3];
+            mate_info[0] = n_cigar;
+            mate_info[1] = refpos;
+            mate_info[2] = unique && passing_qual;
+            std::memcpy(mate_info+3, mcigar, 4*n_cigar);
+            (*overlapping_mates)[tn] = mate_info;
         }
         //-------Second Mate Check
         else if(overlapping_mates->find(tn) != overlapping_mates->end()) {
-            uint32_t* both = (*overlapping_mates)[tn];
-            uint32_t mn_cigar = both[0];
-            int32_t real_mate_pos = both[1];
-            uint32_t* mcigar = &(both[2]);
+            uint32_t* mate_info = (*overlapping_mates)[tn];
+            uint32_t mn_cigar = mate_info[0];
+            int32_t real_mate_pos = mate_info[1];
+            mate_passes_quality = mate_info[2];
+            uint32_t* mcigar = &(mate_info[3]);
             //bash cigar to get spans of overlap
             int32_t malgn_end_pos = real_mate_pos;
             mspans = new int32_t*[mn_cigar];
@@ -458,7 +454,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     malgn_end_pos += len;
                 }
             }
-            delete[] both;
+            delete[] mate_info;
             int nerased = overlapping_mates->erase(tn);
             assert(nerased == 1);
             n_mspans = mspans_idx;
@@ -481,7 +477,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                         coverages[z]++;
                         unique_coverages[z]++;
                     }
-                    //now fixup overlapping segment
+                    //now fixup overlapping segment but only if mate passed quality
                     if(n_mspans > 0 && algn_end_pos < mendpos) {
                         //loop until we find the next overlapping span
                         //if are current segment is too early we just keep the span index where it is
@@ -510,7 +506,8 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                             }
                             for(z = left_end; z < right_end; z++) {
                                 coverages[z]--;
-                                unique_coverages[z]--;
+                                if(mate_passes_quality)
+                                    unique_coverages[z]--;
                             }
                             left_end = next_left_end;
                         }
