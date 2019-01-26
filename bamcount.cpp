@@ -388,12 +388,15 @@ static const int32_t align_length(const bam1_t *rec) {
     return bam_endpos(rec) - rec->core.pos;
 }
 
-typedef std::unordered_map<std::string, int32_t> read2len;
+typedef std::unordered_map<std::string, uint32_t*> read2len;
+static const uint64_t MCIGAR_LENGTH_MASK = 0x00000000FFFFFFFF;
+static const int MCIGAR_LENGTH_BITLEN = 32;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
                                         int32_t* total_intron_length) {
     int32_t refpos = rec->core.pos;
+    int32_t mrefpos = rec->core.mpos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t algn_end_pos = refpos;
     const uint32_t* cigar = bam_get_cigar(rec);
@@ -402,24 +405,121 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     char* qname = bam_get_qname(rec);
     bool unique = min_qual > 0;
     bool passing_qual = rec->core.qual >= min_qual;
-    //need to fix double counting if one mate was unique and the later one was not
-    if(unique_coverages && !double_count && unique && !passing_qual && overlapping_mates->find(qname) != overlapping_mates->end()) {
-        int32_t mate_end_pos = (*overlapping_mates)[qname];
-        for(z = refpos; z < mate_end_pos; z++)
-            unique_coverages[z]++;
+    //fix paired mate overlap double counting
+    //fix overlapping mate pair, only if 1) 2nd mate and 
+    //2) we're either not unique, or we're higher than the required quality
+    int32_t mendpos = 0;
+    int n_mspans = 0;
+    int32_t** mspans;
+    int mspans_idx = 0;
+    char temps[1024];
+    sprintf(temps,"%s_%d_%d", qname, rec->core.pos, rec->core.mpos);
+    std::string tempname(temps);
+    std::string tn(qname);
+    int32_t end_pos = bam_endpos(rec);
+    //-----First Mate Check
+    //if we're the first mate and
+    //we're avoiding double counting and we're a proper pair
+    //and we overlap with our mate, then store our cigar + length
+    //for the later mate to adjust its coverage appropriately
+    if(coverages && !double_count && (rec->core.flag & BAM_FPROPER_PAIR) == 2) {
+        if(rec->core.tid == rec->core.mtid &&
+                end_pos > mrefpos && 
+                refpos < mrefpos) {
+            const uint32_t* mcigar = bam_get_cigar(rec);
+            uint32_t n_cigar = rec->core.n_cigar;
+            uint32_t* both2 = new uint32_t[n_cigar+2];
+            both2[0] = n_cigar;
+            both2[1] = refpos;
+            //fprintf(stderr,"b4 memcpy %d %d\n",n_cigar,sizeof(both2));
+            std::memcpy(both2+2, mcigar, 4*n_cigar);
+            char temps_[1024];
+            sprintf(temps_,"%s_%d_%d",qname, rec->core.mpos, rec->core.pos);
+            //(*overlapping_mates)[std::string(temps_)] = both2;
+            (*overlapping_mates)[tn] = both2;
+        }
+        //-------Second Mate Check
+        else if(overlapping_mates->find(tn) != overlapping_mates->end()) {
+        //if(overlapping_mates->find(tempname) != overlapping_mates->end()) {
+            //uint32_t* both = (*overlapping_mates)[tempname];
+            uint32_t* both = (*overlapping_mates)[tn];
+            uint32_t mn_cigar = both[0];
+            int32_t real_mate_pos = both[1];
+            uint32_t* mcigar = &(both[2]);
+            //bash cigar to get spans of overlap
+            int32_t malgn_end_pos = real_mate_pos;
+            mspans = new int32_t*[mn_cigar];
+            for (k = 0; k < mn_cigar; ++k) {
+                const int cigar_op = bam_cigar_op(mcigar[k]);
+                if(bam_cigar_type(cigar_op)&2) {
+                    const int32_t len = bam_cigar_oplen(mcigar[k]);
+                    if(bam_cigar_type(cigar_op)&1) {
+                        mspans[mspans_idx] = new int32_t(2);
+                        mspans[mspans_idx][0] = malgn_end_pos;
+                        mspans[mspans_idx][1] = malgn_end_pos + len;
+                        mspans_idx++;
+                    }
+                    malgn_end_pos += len;
+                }
+            }
+            free(both);
+            int nerased = overlapping_mates->erase(tn);
+            assert(nerased == 1);
+            //free(temps);
+            n_mspans = mspans_idx;
+            mendpos = malgn_end_pos;
+        }
     }
+    mspans_idx = 0;
     if(unique && passing_qual) {
+        int32_t lastref = 0;
         for (k = 0; k < rec->core.n_cigar; ++k) {
             const int cigar_op = bam_cigar_op(cigar[k]);
+            //do we consume ref?
             if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
                 if(cigar_op == BAM_CREF_SKIP)
                     (*total_intron_length) = (*total_intron_length) + len;
-                if(coverages) {
+                //are we calc coverages && do we consume query?
+                if(coverages && bam_cigar_type(cigar_op)&1) {
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                         coverages[z]++;
                         unique_coverages[z]++;
                     }
+                    //now fixup overlapping segment
+                    if(n_mspans > 0 && algn_end_pos < mendpos) {
+                        //loop until we find the next overlapping span
+                        //if are current segment is too early we just keep the span index where it is
+                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
+                            mspans_idx++;
+                        int32_t cur_end = algn_end_pos + len;
+                        int32_t left_end = algn_end_pos;
+                        if(left_end < mspans[mspans_idx][0])
+                            left_end = mspans[mspans_idx][0];
+                        //check 1) we've still got mate spans 2) current segment overlaps the current mate span
+                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
+                                                    && cur_end > mspans[mspans_idx][0]) {
+                            //set right end of segment to decrement
+                            int32_t right_end = cur_end;
+                            int32_t next_left_end = left_end;
+                            if(right_end >= mspans[mspans_idx][1]) {
+                                right_end = mspans[mspans_idx][1];
+                                //if our segment is greater than the previous mate's
+                                //also increment the mate spans index
+                                mspans_idx++;
+                                if(mspans_idx < n_mspans)
+                                    next_left_end = mspans[mspans_idx][0];
+                            }
+                            else {
+                                next_left_end = mspans[mspans_idx][1];
+                            }
+                            for(z = left_end; z < right_end; z++) {
+                                coverages[z]--;
+                                unique_coverages[z]--;
+                            }
+                            left_end = next_left_end;
+                        }
+                    }    
                 }
                 algn_end_pos += len;
             }
@@ -427,29 +527,51 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     } else {
         for (k = 0; k < rec->core.n_cigar; ++k) {
             const int cigar_op = bam_cigar_op(cigar[k]);
+            //do we consume ref?
             if(bam_cigar_type(cigar_op)&2) {
                 const int32_t len = bam_cigar_oplen(cigar[k]);
                 if(cigar_op == BAM_CREF_SKIP)
                     (*total_intron_length) = (*total_intron_length) + len;
-                if(coverages) {
+                //are we calc coverages && do we consume query?
+                if(coverages && bam_cigar_type(cigar_op)&1) {
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                         coverages[z]++;
                     }
+                    //now fixup overlapping segment
+                    if(n_mspans > 0 && algn_end_pos < mendpos) {
+                        //loop until we find the next overlapping span
+                        //if are current segment is too early we just keep the span index where it is
+                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
+                            mspans_idx++;
+                        int32_t cur_end = algn_end_pos + len;
+                        int32_t left_end = algn_end_pos;
+                        if(left_end < mspans[mspans_idx][0])
+                            left_end = mspans[mspans_idx][0];
+                        //check 1) we've still got mate spans 2) current segment overlaps the current mate span
+                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] && cur_end > mspans[mspans_idx][0]) {
+                            //set right end of segment to decrement
+                            int32_t right_end = cur_end;
+                            int32_t next_left_end = left_end;
+                            if(right_end >= mspans[mspans_idx][1]) {
+                                right_end = mspans[mspans_idx][1];
+                                //if our segment is greater than the previous mate's
+                                //also increment the mate spans index
+                                mspans_idx++;
+                                if(mspans_idx < n_mspans)
+                                    next_left_end = mspans[mspans_idx][0];
+                            }
+                            else {
+                                next_left_end = mspans[mspans_idx][1];
+                            }
+                            for(z = left_end; z < right_end; z++) {
+                                coverages[z]--;
+                            }
+                            left_end = next_left_end;
+                        }
+                    }    
                 }
                 algn_end_pos += len;
             }
-        }
-    }
-    //fix paired mate overlap double counting
-    if(coverages && !double_count && rec->core.tid == rec->core.mtid
-            && (rec->core.flag & BAM_FPROPER_PAIR) == 2
-            && algn_end_pos > rec->core.mpos && rec->core.pos < rec->core.mpos) {
-        if(unique && passing_qual)
-            (*overlapping_mates)[qname] = algn_end_pos;
-        for(z = rec->core.mpos; z < algn_end_pos; z++) {
-            coverages[z]--;
-            if(unique && passing_qual)
-                unique_coverages[z]--;
         }
     }
     return algn_end_pos;
@@ -655,7 +777,7 @@ int main(int argc, const char** argv) {
     std::unordered_map<std::string, bool> annotation_chrs_seen;
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
-    FILE* auc_file;
+    FILE* auc_file = nullptr;
     if(has_option(argv, argv+argc, "--coverage")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -758,8 +880,10 @@ int main(int argc, const char** argv) {
                         overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
                         all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
-                        if(unique)
+                        if(unique) {
+                            sprintf(prefix, "ucov\t%d", ptid);
                             unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+                        }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                             sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
@@ -793,7 +917,7 @@ int main(int argc, const char** argv) {
                         uint64_t both_lens = frag_mates[qname];
                         int32_t both_intron_lengths = total_intron_len + (both_lens & frag_lens_mask);
                         both_lens = both_lens >> FRAG_LEN_BITLEN;
-                        int32_t mreflen = both_lens & frag_lens_mask;
+                        int32_t mreflen = (both_lens & frag_lens_mask);
                         frag_mates.erase(qname);
                         if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
                                 (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
@@ -880,8 +1004,10 @@ int main(int argc, const char** argv) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
             all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
-            if(unique)
+            if(unique) {
+                sprintf(prefix, "ucov\t%d", ptid);
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+            }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
                 if(unique)
@@ -935,6 +1061,6 @@ int main(int argc, const char** argv) {
         fclose(afp);
     if(uafp)
         fclose(uafp);
-    std::cout << "Read " << recs << " records" << std::endl;
+    //std::cout << "Read " << recs << " records" << std::endl;
     return 0;
 }
