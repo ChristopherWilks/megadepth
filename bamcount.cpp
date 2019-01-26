@@ -410,7 +410,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //2) we're either not unique, or we're higher than the required quality
     int32_t mendpos = 0;
     int n_mspans = 0;
-    int32_t** mspans;
+    int32_t** mspans = nullptr;
     int mspans_idx = 0;
     char temps[1024];
     sprintf(temps,"%s_%d_%d", qname, rec->core.pos, rec->core.mpos);
@@ -431,17 +431,13 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             uint32_t* both2 = new uint32_t[n_cigar+2];
             both2[0] = n_cigar;
             both2[1] = refpos;
-            //fprintf(stderr,"b4 memcpy %d %d\n",n_cigar,sizeof(both2));
             std::memcpy(both2+2, mcigar, 4*n_cigar);
             char temps_[1024];
             sprintf(temps_,"%s_%d_%d",qname, rec->core.mpos, rec->core.pos);
-            //(*overlapping_mates)[std::string(temps_)] = both2;
             (*overlapping_mates)[tn] = both2;
         }
         //-------Second Mate Check
         else if(overlapping_mates->find(tn) != overlapping_mates->end()) {
-        //if(overlapping_mates->find(tempname) != overlapping_mates->end()) {
-            //uint32_t* both = (*overlapping_mates)[tempname];
             uint32_t* both = (*overlapping_mates)[tn];
             uint32_t mn_cigar = both[0];
             int32_t real_mate_pos = both[1];
@@ -462,10 +458,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     malgn_end_pos += len;
                 }
             }
-            free(both);
+            delete[] both;
             int nerased = overlapping_mates->erase(tn);
             assert(nerased == 1);
-            //free(temps);
             n_mspans = mspans_idx;
             mendpos = malgn_end_pos;
         }
@@ -548,7 +543,8 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                         if(left_end < mspans[mspans_idx][0])
                             left_end = mspans[mspans_idx][0];
                         //check 1) we've still got mate spans 2) current segment overlaps the current mate span
-                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] && cur_end > mspans[mspans_idx][0]) {
+                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
+                                                    && cur_end > mspans[mspans_idx][0]) {
                             //set right end of segment to decrement
                             int32_t right_end = cur_end;
                             int32_t next_left_end = left_end;
@@ -556,6 +552,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                 right_end = mspans[mspans_idx][1];
                                 //if our segment is greater than the previous mate's
                                 //also increment the mate spans index
+                                //delete[] mspans[mspans_idx];
                                 mspans_idx++;
                                 if(mspans_idx < n_mspans)
                                     next_left_end = mspans[mspans_idx][0];
@@ -573,6 +570,11 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 algn_end_pos += len;
             }
         }
+    }
+    if(mspans) {
+        for(k = 0; k < n_mspans; k++)
+            delete[] mspans[k];
+        delete[] mspans;
     }
     return algn_end_pos;
 }
@@ -1061,6 +1063,7 @@ int main(int argc, const char** argv) {
         fclose(afp);
     if(uafp)
         fclose(uafp);
+    fprintf(stdout,"Read %lu records\n",recs);
     //std::cout << "Read " << recs << " records" << std::endl;
     return 0;
 }
