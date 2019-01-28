@@ -1,0 +1,8 @@
+Processing "tests/test.bam"
+building whole annotation region map done
+2 chromosomes for annotated regions read
+Read 96 records
+
+real    0m1.064s
+user    0m0.830s
+sys     0m1.285s
