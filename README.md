@@ -18,6 +18,7 @@ mkdir -p build && cd build && cmake .. && make
 ```
 
 ## Usage
+
 ```
 bamcount --coverage /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
 ```
@@ -37,26 +38,51 @@ Subcommand `--coverage` is the only subcommand that will output a BigWig file (c
 However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
 
 ### `bamcount --coverage`
+
 Generates per-base counts of overlapping reads across all of the genome.  
 Typically this is used to produce a BigWig.
 
 ### `bamcount --coverage --min-unique-qual <qual_value>`
+
 In addition to producing coverage output for all reads, will also produce coverage output only for reads which have a mapping quality (MAPQ) >= <qual_value> (typically set to `10`.  
 
 ### `bamcount --coverage --annotation <annotated_file.bed> <output_file_name>`
+
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
 
 ### `bamcount --coverage --auc`
+
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
  * `min-unique-qual` only for reads with MAPQ >= to this setting
  * `--annotation`: only for bases in the annotated regions
  
 ### `bamcount --coverage --double-count`
+
 By default, `bamcount --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
+### `bamcount --frag-dist`
+
+Outputs fragment length distribution adjusting for intron lengths.
+Mean, mode statistics are reported at the end of the output with string tag `STATS`.
+
+This uses the absolute value of the `TLEN` field but uses additional filters similar to `csaw`'s fragment length calculation.
+The following alignments are filtered out:
+
+ * secondary
+ * supplementary
+ * not paired
+ * unmapped
+ * mate unmapped
+ * discordant (mates not on same chromosome/reference)
+
+Further, read mates must be on forward/reverse strands and the forward mate must not be downstream of the reverse mate.
+
+Intron length(s) in the paired alignments are also subtracted from the `TLEN` field except where the `TLEN` field is smaller than the combined length of the introns, in which case the `TLEN` is reported as is.
+
+These numbers should be taken as an estimation of the fragment length distribtion.
 
 ### `bamcount --alts`
 
@@ -89,8 +115,4 @@ See the usage message for options, which can selectively disable some
 of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
-
-### `bamcount --coverage --bigwig`
-
-Convert coverage vectors to BigWig
 
