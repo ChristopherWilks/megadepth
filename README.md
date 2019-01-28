@@ -17,6 +17,17 @@ From root directory:
 mkdir -p build && cd build && cmake .. && make
 ```
 
+## Usage
+```
+bamcount --coverage /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
+```
+
+Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
+
+```
+bamcount ./SRR1258218.sorted.bam --threads 4 --no-head --coverage --bigwig SRR1258218 --auc SRR1258218 --min-unique-qual 10 --annotation ./exons.bed SRR1258218 --frag-dist SRR1258218 --alts SRR1258218
+```
+
 ## Subcommands
 
 For any and all subcommands below, if run together, `bamcount` will do only one pass through the BAM file.
@@ -45,6 +56,7 @@ This will also report additional counts for:
 ### `bamcount --coverage --double-count`
 By default, `bamcount --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
+
 
 ### `bamcount --alts`
 
