@@ -19,7 +19,34 @@ mkdir -p build && cd build && cmake .. && make
 
 ## Subcommands
 
-### `bamcount nonref`
+For any and all subcommands below, if run together, `bamcount` will do only one pass through the BAM file.
+While any given subcommand may not be particularly fast on its own, doing them all together can save time.
+
+Subcommand `--coverage` is the only subcommand that will output a BigWig file (currently).
+However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
+
+### `bamcount --coverage`
+Generates per-base counts of overlapping reads across all of the genome.  
+Typically this is used to produce a BigWig.
+
+### `bamcount --coverage --min-unique-qual <qual_value>`
+In addition to producing coverage output for all reads, will also produce coverage output only for reads which have a mapping quality (MAPQ) >= <qual_value> (typically set to `10`.  
+
+### `bamcount --coverage --annotation <annotated_file.bed> <output_file_name>`
+In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
+If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
+
+### `bamcount --coverage --auc`
+Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
+This will also report additional counts for:
+ * `min-unique-qual` only for reads with MAPQ >= to this setting
+ * `--annotation`: only for bases in the annotated regions
+ 
+### `bamcount --coverage --double-count`
+By default, `bamcount --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
+However, double counting can be allowed with this option, which may result in faster running times.
+
+### `bamcount --alts`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
@@ -51,10 +78,7 @@ of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
 
-### `bamcount bigwig`
+### `bamcount --coverage --bigwig`
 
-Convert to bigWig (not implemented).
+Convert coverage vectors to BigWig
 
-Maybe if this were implemented, we should instead have it be enabled
-with an option so that we can write both the `nonref` output and the
-bigWig in the same pass.
