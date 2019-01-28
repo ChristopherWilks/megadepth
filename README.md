@@ -46,12 +46,12 @@ Typically this is used to produce a BigWig.
 
 In addition to producing coverage output for all reads, will also produce coverage output only for reads which have a mapping quality (MAPQ) >= <qual_value> (typically set to `10`.  
 
-### `bamcount --coverage --annotation <annotated_file.bed> <output_file_name>`
+### `bamcount --coverage --annotation <annotated_file.bed> <output_file_prefix>`
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
 
-### `bamcount --coverage --auc <output_file_name>`
+### `bamcount --coverage --auc <output_file_prefix>`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
@@ -63,17 +63,17 @@ This will also report additional counts for:
 By default, `bamcount --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
-### `bamcount --coverage --bigwig <output_file_name>`
+### `bamcount --coverage --bigwig <output_file_prefix>`
 
 Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
 
-### `bamcount --frag-dist <output_file_name>`
+### `bamcount --frag-dist <output_file_prefix>`
 
 Outputs fragment length distribution adjusting for intron lengths.
 
 Mean, mode statistics are reported at the end of the output with string tag `STATS`.
 
-This uses the absolute value of the `TLEN` field but uses additional filters similar to `csaw`(https://github.com/LTLA/csaw)'s fragment length calculation.
+This uses the absolute value of the `TLEN` field but uses additional filters similar to [csaw](https://github.com/LTLA/csaw)'s fragment length calculation.
 
 The following alignments are filtered out:
 
@@ -90,7 +90,7 @@ Intron length(s) in the paired alignments are also subtracted from the `TLEN` fi
 
 These numbers should be taken as an estimation of the fragment length distribtion.
 
-### `bamcount --alts`
+### `bamcount --alts <output_file_prefix>`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
