@@ -268,7 +268,7 @@ static void output_from_cigar_mdz(
     assert(mdzi == mdz.size());
 }
 
-static void output_from_cigar(const bam1_t *rec, std::fstream& fout) {
+static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool include_ss) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -286,7 +286,14 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout) {
                 refpos += run;
                 break;
             }
-            case BAM_CSOFT_CLIP:
+            case BAM_CSOFT_CLIP: {
+                if(include_ss) { 
+                    fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                    seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
+                    seqpos += run;
+                }
+                break;
+            }
             case BAM_CINS: {
                 fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                 seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
@@ -887,7 +894,8 @@ int main(int argc, const char** argv) {
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
-        if((c->flag & BAM_FUNMAP) == 0) {
+        //filter OUT unmapped and secondary alignments
+        if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
             reads_processed++;
             if(count_bases)
                 total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
@@ -1005,7 +1013,7 @@ int main(int argc, const char** argv) {
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    output_from_cigar(rec, alts_file); // just use CIGAR
+                    output_from_cigar(rec, alts_file, include_ss); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
