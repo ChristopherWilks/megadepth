@@ -65,6 +65,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       if --annotation is enabled\n"
     "  --double-count       Allow overlapping ends of PE read to count twice toward\n"
     "                       coverage\n"
+    "  --num-bases          Report total sum of bases in alignments processed (that pass filters)\n"
     "\n"
     "Other outputs:\n"
     "  --read-ends          Print counts of read starts/ends\n"
@@ -381,6 +382,20 @@ static uint64_t print_array(const char* prefix,
         }
     }
     return auc;
+}
+
+//mostly cribed from htslib/sam.c
+//calculates the mapped length of an alignment
+static const uint32_t bam_cigar2maplen(int n_cigar, const uint32_t *cigar)
+{
+    int k;
+    uint32_t mlen = 0;
+    for (k = 0; k < n_cigar; ++k) {
+        int type = bam_cigar_type(bam_cigar_op(cigar[k]));
+        int len = bam_cigar_oplen(cigar[k]);
+        if ((type & 1) && (type & 2)) mlen += len;
+    }
+    return mlen;
 }
 
 static const int32_t align_length(const bam1_t *rec) {
@@ -733,6 +748,7 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
+    bool count_bases = has_option(argv, argv+argc, "--num-bases");
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
@@ -865,10 +881,16 @@ int main(int argc, const char** argv) {
     //calculates AUC automatically
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
+    //the number of reads we actually looked at (didn't filter)
+    uint64_t reads_processed = 0;
+    uint64_t total_number_bases_processed = 0;
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
         if((c->flag & BAM_FUNMAP) == 0) {
+            reads_processed++;
+            if(count_bases)
+                total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
             int32_t total_intron_len = 0;
             int32_t tid = rec->core.tid;
             int32_t end_refpos = -1;
@@ -1061,6 +1083,9 @@ int main(int argc, const char** argv) {
     if(uafp)
         fclose(uafp);
     fprintf(stdout,"Read %lu records\n",recs);
-    //std::cout << "Read " << recs << " records" << std::endl;
+    if(count_bases) {
+        fprintf(stdout,"%lu records passed filters\n",reads_processed);
+        fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
+    }
     return 0;
 }
