@@ -1,8 +1,69 @@
-Processing "tests/test.bam"
-building whole annotation region map done
-2 chromosomes for annotated regions read
-Read 96 records
++ export LD_LIBRARY_PATH=/data7/bamcount/libBigWig:/data7/bamcount/htslib:/data7/bamcount/libBigWig:/data7/bamcount/htslib:/usr/local/cuda-8.0/lib64:/home/cwilks/zstd-1.3.3/lib
++ LD_LIBRARY_PATH=/data7/bamcount/libBigWig:/data7/bamcount/htslib:/data7/bamcount/libBigWig:/data7/bamcount/htslib:/usr/local/cuda-8.0/lib64:/home/cwilks/zstd-1.3.3/lib
++ MD=../mosdepth
++ BT=/home/cwilks/bwtool_mine2/bwtool
++ B2B='python3 ../bam2bigwig.py'
++ KB2B=/data/kent_tools/bigWigToBedGraph
++ WT=wiggletools
++ EXONS=/data7/bamcount/exons.bed
++ EXONS=./test_exons.bed
++ BAM=test.bam
++ echo -n ''
++ echo -n ''
++ for t in default unique
+++ perl -e '$t=default; print "0" if($t eq "default"); print "10" if($t eq "unique");'
++ qarg=0
++ ../mosdepth -F260 -t 4 -Q0 test.bam.default test.bam
 
-real    0m1.064s
-user    0m0.830s
-sys     0m1.285s
+real	0m0.836s
+user	0m0.498s
+sys	0m0.315s
++ cat /dev/fd/63 /dev/fd/62
+++ samtools view -H test.bam
++ python3 ../bam2bigwig.py test.bam.default.per-base.bed.gz.bw
+++ zcat test.bam.default.per-base.bed.gz
+
+real	0m0.102s
+user	0m0.107s
+sys	0m0.435s
++ cut -f1-3,10
++ /home/cwilks/bwtool_mine2/bwtool summary ./test_exons.bed test.bam.default.per-base.bed.gz.bw /dev/stdout -fill=0 -with-sum -keep-bed -decimals=0
++ sort -k1,1 -k2,2n -k3,3n
+
+real	0m0.003s
+user	0m0.000s
+sys	0m0.004s
++ /data/kent_tools/bigWigToBedGraph test.bam.default.per-base.bed.gz.bw test.bam.default.per-base.bed.gz.bw.sums.bed.bg
++ wiggletools AUC test.bam.default.per-base.bed.gz.bw
++ perl -ne 'BEGIN { $t=default; } chomp; $f=$_; $f=~s/\.0+$//; print "ALL_READS_ALL_BASES\t$f\n" if($t eq "default"); print "UNIQUE_READS_ALL_BASES\t$f\n" if($t eq "unique");'
++ cat test.bam.default.per-base.bed.gz.bw.sums.bed
++ perl -ne 'BEGIN { $t=default; } chomp; ($c,$s,$e,$v)=split(/\t/,$_); $f+=$v; END { print "ALL_READS_ANNOTATED_BASES\t$f\n" if($t eq "default"); print "UNIQUE_READS_ANNOTATED_BASES\t$f\n" if($t eq "unique"); }'
++ for t in default unique
+++ perl -e '$t=unique; print "0" if($t eq "default"); print "10" if($t eq "unique");'
++ qarg=10
++ ../mosdepth -F260 -t 4 -Q10 test.bam.unique test.bam
+
+real	0m0.799s
+user	0m0.484s
+sys	0m0.294s
++ cat /dev/fd/63 /dev/fd/62
+++ samtools view -H test.bam
++ python3 ../bam2bigwig.py test.bam.unique.per-base.bed.gz.bw
+++ zcat test.bam.unique.per-base.bed.gz
+
+real	0m0.108s
+user	0m0.125s
+sys	0m0.434s
++ /home/cwilks/bwtool_mine2/bwtool summary ./test_exons.bed test.bam.unique.per-base.bed.gz.bw /dev/stdout -fill=0 -with-sum -keep-bed -decimals=0
++ cut -f1-3,10
++ sort -k1,1 -k2,2n -k3,3n
+
+real	0m0.003s
+user	0m0.002s
+sys	0m0.002s
++ /data/kent_tools/bigWigToBedGraph test.bam.unique.per-base.bed.gz.bw test.bam.unique.per-base.bed.gz.bw.sums.bed.bg
++ wiggletools AUC test.bam.unique.per-base.bed.gz.bw
++ perl -ne 'BEGIN { $t=unique; } chomp; $f=$_; $f=~s/\.0+$//; print "ALL_READS_ALL_BASES\t$f\n" if($t eq "default"); print "UNIQUE_READS_ALL_BASES\t$f\n" if($t eq "unique");'
++ cat test.bam.unique.per-base.bed.gz.bw.sums.bed
++ perl -ne 'BEGIN { $t=unique; } chomp; ($c,$s,$e,$v)=split(/\t/,$_); $f+=$v; END { print "ALL_READS_ANNOTATED_BASES\t$f\n" if($t eq "default"); print "UNIQUE_READS_ANNOTATED_BASES\t$f\n" if($t eq "unique"); }'
++ cat test.bam.per-base.bed.gz.bw.aucs

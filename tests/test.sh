@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
+rm test.bam.auc.tsv test.bam.all.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv
+
 time ./bamcount tests/test.bam --threads 4 --coverage --no-head --bigwig test.bam --auc test.bam --min-unique-qual 10 --annotation tests/test_exons.bed test.bam --frag-dist test.bam --alts test.bam > test_run_out 2>&1
 
-diff tests/test_run_out.txt test_run_out
+#diff tests/test_run_out.txt test_run_out
 
 diff tests/test.bam.orig.frags.tsv test.bam.frags.tsv
 diff tests/test.bam.orig.alts.tsv test.bam.alts.tsv
