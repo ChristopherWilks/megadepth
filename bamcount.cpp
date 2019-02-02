@@ -700,27 +700,38 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn
     return bwfp;
 }
 
+int KALLISTO_MAX_FRAG_LENGTH = 1000;
 typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
 static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn) 
 {
     double mean = 0.0;
     uint64_t count = 0;
+    //track a Kallisto-comparable version separately
+    double kmean = 0.0;
+    uint64_t kcount = 0;
     uint64_t mode = 0;
     uint64_t mode_count = 0;
     for(auto kv: *frag_dist) {
         fprintf(outfn, "%d\t%u\n", kv.first, kv.second);
         count += kv.second;
         mean += (kv.first*kv.second);
+        if(kv.first < KALLISTO_MAX_FRAG_LENGTH) {
+            kcount += kv.second;
+            kmean += (kv.first*kv.second);
+        }
         if(kv.second > mode_count) {
             mode_count = kv.second;
             mode = kv.first;
         }
     }
     mean /= count;
+    kmean /= kcount;
     fprintf(outfn, "STAT\tCOUNT\t%lu\n", count);
     fprintf(outfn, "STAT\tMEAN_LENGTH\t%.3f\n", mean);
     fprintf(outfn, "STAT\tMODE_LENGTH\t%lu\n", mode);
     fprintf(outfn, "STAT\tMODE_LENGTH_COUNT\t%lu\n", mode_count);
+    fprintf(outfn, "STAT\tKALLISTO_COUNT\t%lu\n", kcount);
+    fprintf(outfn, "STAT\tKALLISTO_MEAN_LENGTH\t%.3f\n", kmean);
 }
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
