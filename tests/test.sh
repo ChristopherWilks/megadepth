@@ -2,7 +2,7 @@
 
 rm test.bam.auc.tsv test.bam.all.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv
 
-time ./bamcount-debug tests/test.bam --threads 4 --coverage --no-head --bigwig test.bam --auc test.bam --min-unique-qual 10 --annotation tests/test_exons.bed test.bam --frag-dist test.bam --alts test.bam > test_run_out 2>&1
+time ./bamcount-debug tests/test.bam --threads 4 --coverage --no-head --bigwig test.bam --auc test.bam --min-unique-qual 10 --annotation tests/test_exons.bed test.bam --frag-dist test.bam --alts test.bam --read-ends test > test_run_out 2>&1
 
 #diff tests/test_run_out.txt test_run_out
 
@@ -19,5 +19,6 @@ for f in all unique; do
 done
 diff tests/test.bam.mosdepth.bwtool.all_aucs test.bam.auc.tsv
 
-./bamcount-debug tests/test.bam --threads 4 --no-head --read-ends | cut -f 2- | sort -k1,1 -k2,2n -k3,3n > test_starts_ends.tsv
-diff test_starts_ends.tsv tests/test.bam.read_ends.both.tsv
+#./bamcount-debug tests/test.bam --threads 4 --no-head --read-ends test
+cat test.starts.tsv test.ends.tsv | sort -k1,1 -k2,2n -k3,3n > test_starts_ends.tsv
+diff test_starts_ends.tsv tests/test.bam.read_ends.both.unique.tsv

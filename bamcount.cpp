@@ -68,7 +68,9 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --num-bases          Report total sum of bases in alignments processed (that pass filters)\n"
     "\n"
     "Other outputs:\n"
-    "  --read-ends          Print counts of read starts/ends\n"
+    "  --read-ends          Print counts of read starts/ends, if --min-unique-qual is set\n"
+    "                       then only the alignments that pass that filter will be counted here\n"
+    "                       Writes to 2 TSV files: <prefix>.starts.tsv, <prefix>.ends.tsv\n"
     "  --frag-dist <prefix> Print fragment length distribution across the genome\n"
     "                       Writes to a TSV file <prefix>.frags.tsv\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
@@ -868,19 +870,20 @@ int main(int argc, const char** argv) {
     uint32_t* starts = nullptr;
     uint32_t* ends = nullptr;
     bool compute_ends = false;
-    bigWigFile_t *rsbwfp = nullptr;
-    bigWigFile_t *rebwfp = nullptr;
+    FILE* rsfp = nullptr;
+    FILE* refp = nullptr;
     if(has_option(argv, argv+argc, "--read-ends")) {
         compute_ends = true;
+        const char *prefix = *get_option(argv, argv+argc, "--read-ends");
+        char refn[1024];
+        sprintf(refn, "%s.starts.tsv", prefix);
+        rsfp = fopen(refn,"w");
+        sprintf(refn, "%s.ends.tsv", prefix);
+        refp = fopen(refn,"w");
         if(chr_size == -1) 
             chr_size = get_longest_target_size(hdr);
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
-        if(has_option(argv, argv+argc, "--bigwig")) {
-            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
-            rsbwfp = create_bigwig_file(hdr, bw_fn, "read_starts.bw");
-            rebwfp = create_bigwig_file(hdr, bw_fn, "read_ends.bw");
-        }
     }
     bool print_frag_dist = false;
     fraglen2count frag_dist;
@@ -999,23 +1002,28 @@ int main(int argc, const char** argv) {
             }
 
             //track read starts/ends
+            //if minimum quality is set, then we only track starts/ends for alignments that pass
             if(compute_ends) {
                 int32_t refpos = rec->core.pos;
                 if(tid != ptid) {
                     if(ptid != -1) {
-                        sprintf(prefix, "start\t%s", hdr->target_name[ptid]);
-                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, rsbwfp);
-                        sprintf(prefix, "end\t%s", hdr->target_name[ptid]);
-                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, rebwfp);
+                        for(uint32_t j = 0; j < hdr->target_len[ptid]; j++) {
+                            if(starts[j] > 0)
+                                fprintf(rsfp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, starts[j]);
+                            if(ends[j] > 0)
+                                fprintf(refp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, ends[j]);
+                        }
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
                 }
-                starts[refpos]++;
-                if(end_refpos == -1)
-                    end_refpos = refpos + align_length(rec);
-                //offset by 1
-                ends[end_refpos-1]++;
+                if(bw_unique_min_qual == 0 || rec->core.qual >= bw_unique_min_qual) {
+                    starts[refpos]++;
+                    if(end_refpos == -1)
+                        end_refpos = refpos + align_length(rec);
+                    //offset by 1
+                    ends[end_refpos-1]++;
+                }
             }
             ptid = tid;
 
@@ -1100,30 +1108,29 @@ int main(int argc, const char** argv) {
     }
     if(compute_ends) {
         if(ptid != -1) {
-            sprintf(prefix, "start\t%s", hdr->target_name[ptid]);
-            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, rsbwfp);
-            sprintf(prefix, "end\t%s", hdr->target_name[ptid]);
-            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, rebwfp);
+            for(uint32_t j = 0; j < hdr->target_len[ptid]; j++) {
+                if(starts[j] > 0)
+                    fprintf(rsfp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, starts[j]);
+                if(ends[j] > 0)
+                    fprintf(refp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, ends[j]);
+            }
         }
         delete[] starts;
         delete[] ends;
     }
     if(bwfp) {
         bwClose(bwfp);
-        if(!ubwfp && !rebwfp)
+        if(!ubwfp)
             bwCleanup();
     }
     if(ubwfp) {
         bwClose(ubwfp);
-        if(!rebwfp)
             bwCleanup();
     }
-    if(rsbwfp)
-        bwClose(rsbwfp);
-    if(rebwfp) {
-        bwClose(rebwfp);
-        bwCleanup();
-    }
+    if(rsfp)
+        fclose(rsfp);
+    if(refp)
+        fclose(refp);
     if(compute_alts && alts_file)
         alts_file.close();
     if(auc_file)
