@@ -72,6 +72,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --frag-dist <prefix> Print fragment length distribution across the genome\n"
     "                       Writes to a TSV file <prefix>.frags.tsv\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
+    "  --ends               Report end coordinate for each read (useful for debugging)\n"
     "\n";
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -349,7 +350,6 @@ static uint64_t print_array(const char* prefix,
                         const uint32_t* arr, 
                         const long arr_sz,
                         const bool skip_zeros,
-                        const bool collapse_regions,
                         bigWigFile_t* bwfp) {
     bool first = true;
     bool first_print = true;
@@ -772,6 +772,7 @@ int main(int argc, const char** argv) {
     const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
     const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
     const bool double_count = has_option(argv, argv+argc, "--double-count");
+    const bool report_end_coord = has_option(argv, argv+argc, "--ends");
 
     size_t recs = 0;
     bam_hdr_t *hdr = sam_hdr_read(bam_fh);
@@ -867,12 +868,19 @@ int main(int argc, const char** argv) {
     uint32_t* starts = nullptr;
     uint32_t* ends = nullptr;
     bool compute_ends = false;
+    bigWigFile_t *rsbwfp = nullptr;
+    bigWigFile_t *rebwfp = nullptr;
     if(has_option(argv, argv+argc, "--read-ends")) {
         compute_ends = true;
         if(chr_size == -1) 
             chr_size = get_longest_target_size(hdr);
         starts = new uint32_t[chr_size];
         ends = new uint32_t[chr_size];
+        if(has_option(argv, argv+argc, "--bigwig")) {
+            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
+            rsbwfp = create_bigwig_file(hdr, bw_fn, "read_starts.bw");
+            rebwfp = create_bigwig_file(hdr, bw_fn, "read_ends.bw");
+        }
     }
     bool print_frag_dist = false;
     fraglen2count frag_dist;
@@ -908,21 +916,35 @@ int main(int argc, const char** argv) {
         //filter OUT unmapped and secondary alignments
         if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
             reads_processed++;
+            //base-0 start coordinate
+            int32_t refpos = rec->core.pos;
+            //size of aligned portion of the read (start to end on the reference)
+            uint32_t maplen = -1;
+            //base-1 end coordinate
+            int32_t end_refpos = -1;
+            //base-0 mate start coordinate
+            int32_t mrefpos = rec->core.mpos;
+            //read name
+            char* qname = bam_get_qname(rec);
+            //used for adjusting the fragment lengths
+            int32_t total_intron_len = 0;
+            //ref chrm/contig ID
+            int32_t tid = rec->core.tid;
+            
+            //mainly for debuging purposes 
             if(count_bases)
                 total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
-            int32_t total_intron_len = 0;
-            int32_t tid = rec->core.tid;
-            int32_t end_refpos = -1;
+
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
-                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp);
                         if(unique) {
                             sprintf(prefix, "ucov\t%d", ptid);
-                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp);
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
@@ -938,6 +960,13 @@ int main(int argc, const char** argv) {
                 }
                 end_refpos = calculate_coverage(rec, coverages, unique_coverages, double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len);
             }
+            //additional counting options which make use of knowing the end coordinate/maplen
+            //however, if we're already running calculate_coverage, we don't need to redo this
+            if(end_refpos == -1 && (report_end_coord || print_frag_dist))
+                end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
+
+            if(report_end_coord)
+                fprintf(stdout, "%s\t%d\n", qname, end_refpos);
 
             //track fragment lengths per chromosome
             if(print_frag_dist) {
@@ -946,13 +975,7 @@ int main(int argc, const char** argv) {
                 if((c->flag & BAM_FSECONDARY) == 0 && (c->flag & BAM_FSUPPLEMENTARY) == 0 && 
                         (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
                         ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
-                    //here we're only interested in getting the length of the intron(s) from the cigar string (when not counting coverage)
-                    if(!compute_coverage)
-                        end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
                     //are we the later mate? if so we calculate the frag length
-                    int32_t refpos = rec->core.pos;
-                    int32_t mrefpos = rec->core.mpos;
-                    char* qname = bam_get_qname(rec);
                     if(frag_mates.find(qname) != frag_mates.end()) {
                         uint64_t both_lens = frag_mates[qname];
                         int32_t both_intron_lengths = total_intron_len + (both_lens & frag_lens_mask);
@@ -980,18 +1003,19 @@ int main(int argc, const char** argv) {
                 int32_t refpos = rec->core.pos;
                 if(tid != ptid) {
                     if(ptid != -1) {
-                        sprintf(prefix, "start\t%d", ptid);
-                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, nullptr);
-                        sprintf(prefix, "end\t%d", ptid);
-                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, nullptr);
+                        sprintf(prefix, "start\t%s", hdr->target_name[ptid]);
+                        print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, rsbwfp);
+                        sprintf(prefix, "end\t%s", hdr->target_name[ptid]);
+                        print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, rebwfp);
                     }
                     reset_array(starts, chr_size);
                     reset_array(ends, chr_size);
                 }
                 starts[refpos]++;
                 if(end_refpos == -1)
-                    end_refpos = refpos + align_length(rec) - 1;
-                ends[end_refpos]++;
+                    end_refpos = refpos + align_length(rec);
+                //offset by 1
+                ends[end_refpos-1]++;
             }
             ptid = tid;
 
@@ -1043,10 +1067,10 @@ int main(int argc, const char** argv) {
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, true, bwfp);
+            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp);
             if(unique) {
                 sprintf(prefix, "ucov\t%d", ptid);
-                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, true, ubwfp);
+                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp);
             }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
@@ -1076,21 +1100,28 @@ int main(int argc, const char** argv) {
     }
     if(compute_ends) {
         if(ptid != -1) {
-            sprintf(prefix, "start\t%d", ptid);
-            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, true, nullptr);
-            sprintf(prefix, "end\t%d", ptid);
-            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, true, nullptr);
+            sprintf(prefix, "start\t%s", hdr->target_name[ptid]);
+            print_array(prefix, hdr->target_name[ptid], starts, hdr->target_len[ptid], true, rsbwfp);
+            sprintf(prefix, "end\t%s", hdr->target_name[ptid]);
+            print_array(prefix, hdr->target_name[ptid], ends, hdr->target_len[ptid], true, rebwfp);
         }
         delete[] starts;
         delete[] ends;
     }
     if(bwfp) {
         bwClose(bwfp);
-        if(!ubwfp)
+        if(!ubwfp && !rebwfp)
             bwCleanup();
     }
     if(ubwfp) {
         bwClose(ubwfp);
+        if(!rebwfp)
+            bwCleanup();
+    }
+    if(rsbwfp)
+        bwClose(rsbwfp);
+    if(rebwfp) {
+        bwClose(rebwfp);
         bwCleanup();
     }
     if(compute_alts && alts_file)
