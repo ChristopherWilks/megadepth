@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#get this script's path
+p=`perl -e '@f=split("/","'$0'"); pop(@f); print "".join("/",@f)."\n";'`
+
+export LD_LIBRARY_PATH=$p/libBigWig:$p/htslib:$LD_LIBRARY_PATH
+$p/bamcount "$@"
