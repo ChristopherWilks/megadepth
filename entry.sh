@@ -7,6 +7,7 @@ if [[ ! -d /code ]] ; then
 fi 
 cd /code
 
+rm -rf htslib libBigWig
 ./get_htslib.sh
 ./get_libBigWig.sh
 
@@ -35,4 +36,4 @@ cp ${DR}/bamcount ./bamcount-debug
 rm -rf ${DR}
 
 zip bamcount.zip bamcount bamcount-debug
-rm -f bamcount bamcount-debug
+#rm -f bamcount bamcount-debug
