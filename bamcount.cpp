@@ -3,6 +3,7 @@
 // modified by cwilks 2019-01-09.
 //
 
+#define __STDC_FORMAT_MACROS
 #include <iostream>
 #include <vector>
 #include <cassert>
