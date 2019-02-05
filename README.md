@@ -37,6 +37,15 @@ While any given subcommand may not be particularly fast on its own, doing them a
 Subcommand `--coverage` is the only subcommand that will output a BigWig file (currently).
 However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
 
+### `bamcount --auc <output_file_prefix>`
+
+Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
+This will also report additional counts for:
+ * `min-unique-qual` only for reads with MAPQ >= to this setting
+ * `--annotation`: only for bases in the annotated regions
+ 
+This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
+
 ### `bamcount --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
@@ -50,13 +59,6 @@ In addition to producing coverage output for all reads, will also produce covera
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
-
-### `bamcount --coverage --auc <output_file_prefix>`
-
-Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
-This will also report additional counts for:
- * `min-unique-qual` only for reads with MAPQ >= to this setting
- * `--annotation`: only for bases in the annotated regions
  
 ### `bamcount --coverage --double-count`
 
