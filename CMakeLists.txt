@@ -19,4 +19,4 @@ if(CMAKE_THREAD_LIBS_INIT)
 endif()
 
 target_link_libraries(bamcount-dyn z hts BigWig -L${CMAKE_SOURCE_DIR}/htslib -L${CMAKE_SOURCE_DIR}/libBigWig)
-target_link_libraries(bamcount z curl ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a)
+target_link_libraries(bamcount z ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a)
