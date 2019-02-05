@@ -352,7 +352,8 @@ static uint64_t print_array(const char* prefix,
                         const uint32_t* arr, 
                         const long arr_sz,
                         const bool skip_zeros,
-                        bigWigFile_t* bwfp) {
+                        bigWigFile_t* bwfp,
+                        const bool just_auc = false) {
     bool first = true;
     bool first_print = true;
     float running_value = 0;
@@ -365,13 +366,15 @@ static uint64_t print_array(const char* prefix,
                 if(running_value > 0 || !skip_zeros) {
                     //based on wiggletools' AUC calculation
                     auc += (i - last_pos) * ((long) running_value);
-                    if(bwfp && first_print)
-                        bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
-                    else if(bwfp)
-                        bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
-                    else
-                        fprintf(stdout, "%s\t%u\t%u\t%.0f\n", prefix, last_pos, i, running_value);
-                    first_print = false;
+                    if(not just_auc) {
+                        if(bwfp && first_print)
+                            bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
+                        else if(bwfp)
+                            bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
+                        else
+                            fprintf(stdout, "%s\t%u\t%u\t%.0f\n", prefix, last_pos, i, running_value);
+                        first_print = false;
+                    }
                 }
             }
             first = false;
@@ -382,12 +385,14 @@ static uint64_t print_array(const char* prefix,
     if(!first) {
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
-            if(bwfp && first_print)
-                bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-            else if(bwfp)
-                bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-            else
-                fprintf(stdout, "%s\t%u\t%lu\t%0.f\n", prefix, last_pos, arr_sz, running_value);
+            if(not just_auc) {
+                if(bwfp && first_print)
+                    bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+                else if(bwfp)
+                    bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+                else
+                    fprintf(stdout, "%s\t%u\t%lu\t%0.f\n", prefix, last_pos, arr_sz, running_value);
+            }
         }
     }
     return auc;
@@ -654,7 +659,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -665,7 +670,8 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
             sum += coverages[j];
         }
         (*annotated_auc) = (*annotated_auc) + sum;
-        fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+        if(!just_auc)
+            fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
     }
 }
 
@@ -814,8 +820,10 @@ int main(int argc, const char** argv) {
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
     FILE* auc_file = nullptr;
-    if(has_option(argv, argv+argc, "--coverage")) {
+    bool just_auc = false;
+    if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
+        just_auc = !has_option(argv, argv+argc, "--coverage");
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
         if(has_option(argv, argv+argc, "--bigwig")) {
@@ -831,7 +839,8 @@ int main(int argc, const char** argv) {
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             unique = true;
-            ubwfp = create_bigwig_file(hdr, bw_fn, "unique.bw");
+            if(!just_auc)
+                ubwfp = create_bigwig_file(hdr, bw_fn, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
@@ -853,12 +862,15 @@ int main(int argc, const char** argv) {
             afp = fopen(afile, "r");
             err = read_annotation(afp, &annotations);
             fclose(afp);
-            char afn[1024];
-            sprintf(afn, "%s.all.tsv", prefix);
-            afp = fopen(afn, "w");
-            if(ubwfp) {
-                sprintf(afn, "%s.unique.tsv", prefix);
-                uafp = fopen(afn, "w");
+            afp = nullptr;
+            if(!just_auc) {
+                char afn[1024];
+                sprintf(afn, "%s.all.tsv", prefix);
+                afp = fopen(afn, "w");
+                if(ubwfp) {
+                    sprintf(afn, "%s.unique.tsv", prefix);
+                    uafp = fopen(afn, "w");
+                }
             }
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
@@ -944,16 +956,16 @@ int main(int argc, const char** argv) {
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
-                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp);
+                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
                         if(unique) {
                             sprintf(prefix, "ucov\t%d", ptid);
-                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp);
+                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
                             if(unique)
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc);
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
                             annotation_chrs_seen[hdr->target_name[ptid]] = true;
                         }
                     }
@@ -1075,15 +1087,15 @@ int main(int argc, const char** argv) {
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp);
+            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
             if(unique) {
                 sprintf(prefix, "ucov\t%d", ptid);
-                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp);
+                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
             }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc);
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
                 if(unique)
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc);
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
                 annotation_chrs_seen[hdr->target_name[ptid]] = true;
             }
         }
