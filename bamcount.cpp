@@ -27,6 +27,11 @@ static const int END_COL=2;
 static const int LINE_BUFFER_LENGTH=1048576;
 static const int BIGWIG_INIT_VAL = 17;
 
+static const void print_version() {
+    //fprintf(stderr, "bamcount %s\n", string(BAMCOUNT_VERSION).c_str());
+    std::cout << "bamcount " << std::string(BAMCOUNT_VERSION) << std::endl;
+}
+
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Usage:\n"
@@ -749,7 +754,12 @@ static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
     if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
-        std::cout << USAGE << std::endl;
+        print_version();
+        std::cout << std::endl << USAGE << std::endl;
+        return 0;
+    }
+    if(has_option(argv, argv + argc, "--version")) {
+        print_version();
         return 0;
     }
     std::ios::sync_with_stdio(false);

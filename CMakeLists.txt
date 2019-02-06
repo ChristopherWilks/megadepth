@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.6)
 project(bamcount)
 set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DBAMCOUNT_VERSION=\"\\\"`cat ../VERSION`\\\"\"")
 add_executable(bamcount-dyn bamcount.cpp)
 add_executable(bamcount bamcount.cpp)
 include_directories(htslib libBigWig)
