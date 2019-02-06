@@ -15,6 +15,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <vector>
+#include <math.h>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 #include "bigWig.h"
@@ -353,6 +354,9 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
         arr[i] = 0;
 }
 
+//used for buffering up text/gz output
+int OUT_BUFF_SZ=4000000;
+int COORD_STR_LEN=34;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
                         const uint32_t* arr, 
@@ -365,6 +369,14 @@ static uint64_t print_array(const char* prefix,
     float running_value = 0;
     uint32_t last_pos = 0;
     uint64_t auc = 0;
+    //from https://stackoverflow.com/questions/27401388/efficient-gzip-writing-with-gzprintf
+    int chrnamelen = strlen(chrm);
+    int total_line_len = chrnamelen + COORD_STR_LEN;
+    int num_lines_per_buf = round(OUT_BUFF_SZ / total_line_len) - 3;
+    //fprintf(stdout, "num_lines_per_buf %d\n", num_lines_per_buf);
+    char buf[OUT_BUFF_SZ];
+    int buf_written = 0;
+    char* bufptr = buf;
     //this will print the coordinates in base-0
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
@@ -377,8 +389,16 @@ static uint64_t print_array(const char* prefix,
                             bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
                         else if(bwfp)
                             bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
-                        else
-                            fprintf(stdout, "%s\t%u\t%u\t%.0f\n", prefix, last_pos, i, running_value);
+                        else {
+                            if(buf_written >= num_lines_per_buf) {
+                                bufptr[0]='\0';
+                                fprintf(stdout, "%s", buf); 
+                                bufptr = buf;
+                                buf_written = 0;
+                            }
+                            bufptr += sprintf(bufptr, "%s\t%u\t%u\t%.0f\n", chrm, last_pos, i, running_value);
+                            buf_written++;
+                        } 
                         first_print = false;
                     }
                 }
@@ -396,8 +416,13 @@ static uint64_t print_array(const char* prefix,
                     bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
                 else if(bwfp)
                     bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-                else
-                    fprintf(stdout, "%s\t%u\t%lu\t%0.f\n", prefix, last_pos, arr_sz, running_value);
+                else {
+                    if(buf_written > 0) {
+                        bufptr[0]='\0';
+                        fprintf(stdout, "%s", buf); 
+                    }
+                    fprintf(stdout, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                }
             }
         }
     }
