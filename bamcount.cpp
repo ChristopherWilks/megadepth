@@ -196,7 +196,7 @@ static void output_from_cigar_mdz(
         std::vector<MdzOp>& mdz,
         std::fstream& fout,
         bool print_qual = false,
-        bool include_ss = false,
+        bool include_sc = false,
         bool include_n_mms = false,
         bool delta = false)
 {
@@ -253,7 +253,7 @@ static void output_from_cigar_mdz(
             seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
             seq_off += run;
         } else if(op == BAM_CSOFT_CLIP) {
-            if(include_ss) {
+            if(include_sc) {
                 fout << rec->core.tid << ',' << ref_off << ",S,";
                 seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
                 seq_off += run;
@@ -278,7 +278,7 @@ static void output_from_cigar_mdz(
     assert(mdzi == mdz.size());
 }
 
-static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool include_ss) {
+static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool include_sc) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -297,7 +297,7 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool 
                 break;
             }
             case BAM_CSOFT_CLIP: {
-                if(include_ss) { 
+                if(include_sc) { 
                     fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                     seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
                     seqpos += run;
@@ -813,7 +813,7 @@ int main(int argc, const char** argv) {
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
-    const bool include_ss = has_option(argv, argv+argc, "--include-softclip");
+    const bool include_sc = has_option(argv, argv+argc, "--include-softclip");
     const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
     const bool double_count = has_option(argv, argv+argc, "--double-count");
     const bool report_end_coord = has_option(argv, argv+argc, "--ends");
@@ -1104,13 +1104,13 @@ int main(int argc, const char** argv) {
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    output_from_cigar(rec, alts_file, include_ss); // just use CIGAR
+                    output_from_cigar(rec, alts_file, include_sc); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
                     output_from_cigar_mdz(
                             rec, mdzbuf, alts_file, 
-                            print_qual, include_ss, include_n_mms); // use CIGAR and MD:Z
+                            print_qual, include_sc, include_n_mms); // use CIGAR and MD:Z
                 }
             }
         }
