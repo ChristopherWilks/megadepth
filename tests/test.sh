@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
-rm test.bam.auc.tsv test.bam.all.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv
+rm test.bam.auc.tsv test.bam.all.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv test.bam.softclip.tsv
 
-time ./bamcount-debug tests/test.bam --threads 4 --coverage --no-head --bigwig test.bam --auc test.bam --min-unique-qual 10 --annotation tests/test_exons.bed test.bam --frag-dist test.bam --alts test.bam --read-ends test > test_run_out 2>&1
+time ./bamcount-debug tests/test.bam --threads 4 --coverage --no-head --bigwig test.bam --auc test.bam --min-unique-qual 10 --annotation tests/test_exons.bed test.bam --frag-dist test.bam --alts test.bam --include-softclip test.bam --only-polya --read-ends test --test-polya > test_run_out 2>&1
 
 #diff tests/test_run_out.txt test_run_out
 
 diff tests/test.bam.orig.frags.tsv test.bam.frags.tsv
 diff tests/test.bam.orig.alts.tsv test.bam.alts.tsv
+diff tests/test.bam.orig.softclip.tsv test.bam.softclip.tsv
 for f in all unique; do
     #need to write an option to output bigwig instead of relying on kent tools for this test
     #for t in tsv bw.bg; do

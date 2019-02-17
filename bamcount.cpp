@@ -27,6 +27,8 @@ static const int END_COL=2;
 //1MB per line should be more than enough for CIO
 static const int LINE_BUFFER_LENGTH=1048576;
 static const int BIGWIG_INIT_VAL = 17;
+static double SOFTCLIP_POLYA_TOTAL_COUNT_MIN=3;
+static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 
 static const void print_version() {
     //fprintf(stderr, "bamcount %s\n", string(BAMCOUNT_VERSION).c_str());
@@ -47,6 +49,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --alts <prefix>      Print differing from ref per-base coverages\n"
     "                       Writes to a CSV file <prefix>.alts.tsv\n"
     "  --include-softclip   Print a record for soft-clipped bases\n"
+    "  --only-polya         If --include-softclip, only print softclips which are mostly A's or T's\n"
     "  --include-n          Print mismatch records when mismatched read base is N\n"
     "  --print-qual         Print quality values for mismatched bases\n"
     "  --delta              Print POS field as +/- delta from previous\n"
@@ -82,6 +85,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Writes to a TSV file <prefix>.frags.tsv\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
     "  --ends               Report end coordinate for each read (useful for debugging)\n"
+    "  --test-polya         Lower Poly-A filter minimums for testing (only useful for debugging/testing)\n"
     "\n";
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -122,6 +126,26 @@ struct MdzOp {
     int run;
     char str[1024];
 };
+
+//from https://github.com/samtools/htslib/blob/7c04ea5c328547e9e8a9af4b932b87a3cb1939e6/hts.c#L82
+//const char seq_nt16_str[] = "=ACMGRSVTWYHKDBN";
+int A_idx = 1;
+int T_idx = 8;
+static inline int polya_check(const uint8_t *str, size_t off, size_t run, char *c) {
+    char seq_nt16_str_counts[16] = {0};
+    for(size_t i = off; i < off + run; i++)
+        seq_nt16_str_counts[bam_seqi(str, i)]++;
+    int count = -1;
+    if((seq_nt16_str_counts[A_idx] / (double) run) >= SOFTCLIP_POLYA_RATIO_MIN) {
+        *c = 'A';
+        count = seq_nt16_str_counts[A_idx];
+    }
+    else if((seq_nt16_str_counts[T_idx] / (double) run) >= SOFTCLIP_POLYA_RATIO_MIN) {
+        *c = 'T';
+        count = seq_nt16_str_counts[T_idx];
+    }
+    return count;
+}
 
 static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
     for(size_t i = off; i < off + run; i++) {
@@ -195,8 +219,10 @@ static void output_from_cigar_mdz(
         const bam1_t *rec,
         std::vector<MdzOp>& mdz,
         std::fstream& fout,
+        uint64_t* total_softclip_count,
         bool print_qual = false,
         bool include_sc = false,
+        bool only_polya_sc = false,
         bool include_n_mms = false,
         bool delta = false)
 {
@@ -254,10 +280,24 @@ static void output_from_cigar_mdz(
             seq_off += run;
         } else if(op == BAM_CSOFT_CLIP) {
             if(include_sc) {
-                fout << rec->core.tid << ',' << ref_off << ",S,";
-                seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
-                seq_off += run;
+                char direction = '+';
+                if(seq_off == 0)
+                    direction = '-';
+                (*total_softclip_count)+=run;
+                if(only_polya_sc) { 
+                    char c;
+                    int count_polya = polya_check(seq, seq_off, (size_t)run, &c);
+                    if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
+                        fout << rec->core.tid << ',' << ref_off << ",S,";
+                        fout << run << ',' << direction << ',' << c << ',' << count_polya << '\n';
+                    }
+                }
+                else { 
+                    fout << rec->core.tid << ',' << ref_off << ",S,";
+                    seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
+                }
             }
+            seq_off += run;
         } else if (op == BAM_CDEL) {
             assert(mdz[mdzi].op == '^');
             assert(run == mdz[mdzi].run);
@@ -278,7 +318,7 @@ static void output_from_cigar_mdz(
     assert(mdzi == mdz.size());
 }
 
-static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool include_sc) {
+static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -292,21 +332,35 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, const bool 
         int run = bam_cigar_oplen(cigar[k]);
         switch(op) {
             case BAM_CDEL: {
-                fout << rec->core.tid << ',' << refpos << ",D," << run << std::endl;
+                fout << rec->core.tid << ',' << refpos << ",D," << run << '\n';
                 refpos += run;
                 break;
             }
             case BAM_CSOFT_CLIP: {
-                if(include_sc) { 
-                    fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                    seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
-                    seqpos += run;
+                if(include_sc) {
+                    char direction = '+';
+                    if(seqpos == 0)
+                        direction = '-';
+                    (*total_softclip_count) += run;
+                    if(only_polya_sc) { 
+                        char c;
+                        int count_polya = polya_check(seq, (size_t)seqpos, (size_t)run, &c);
+                        if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
+                            fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                            fout << run << ',' << direction << ',' << c << ',' << count_polya << '\n';
+                        }
+                    }
+                    else { 
+                        fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                        seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << '\n';
+                    }
                 }
+                seqpos += run;
                 break;
             }
             case BAM_CINS: {
                 fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << std::endl;
+                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << '\n';
                 seqpos += run;
                 break;
             }
@@ -813,10 +867,25 @@ int main(int argc, const char** argv) {
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
-    const bool include_sc = has_option(argv, argv+argc, "--include-softclip");
+    bool include_sc = false;
+    FILE* softclip_file;
+    uint64_t total_softclip_count = 0;
+    uint64_t total_number_sequence_bases_processed = 0;
+    if(has_option(argv, argv+argc, "--include-softclip")) {
+        include_sc = true;
+        const char *prefix = *get_option(argv, argv+argc, "--include-softclip");
+        char afn[1024];
+        sprintf(afn, "%s.softclip.tsv", prefix);
+        softclip_file = fopen(afn, "w");
+    }
+    const bool only_polya_sc = has_option(argv, argv+argc, "--only-polya");
     const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
     const bool double_count = has_option(argv, argv+argc, "--double-count");
     const bool report_end_coord = has_option(argv, argv+argc, "--ends");
+    if(has_option(argv, argv+argc, "--test-polya")) {
+        SOFTCLIP_POLYA_TOTAL_COUNT_MIN=1;
+        SOFTCLIP_POLYA_RATIO_MIN=0.01;
+    }
 
     size_t recs = 0;
     bam_hdr_t *hdr = sam_hdr_read(bam_fh);
@@ -986,6 +1055,9 @@ int main(int argc, const char** argv) {
             if(count_bases)
                 total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
 
+            if(softclip_file)
+                total_number_sequence_bases_processed += c->l_qseq;
+
             //track coverage
             if(compute_coverage) {
                 if(tid != ptid) {
@@ -1104,13 +1176,13 @@ int main(int argc, const char** argv) {
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    output_from_cigar(rec, alts_file, include_sc); // just use CIGAR
+                    output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
                     output_from_cigar_mdz(
-                            rec, mdzbuf, alts_file, 
-                            print_qual, include_sc, include_n_mms); // use CIGAR and MD:Z
+                            rec, mdzbuf, alts_file, &total_softclip_count,
+                            print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
             }
         }
@@ -1191,6 +1263,11 @@ int main(int argc, const char** argv) {
     if(count_bases) {
         fprintf(stdout,"%lu records passed filters\n",reads_processed);
         fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
+    }
+    if(softclip_file) {
+        fprintf(softclip_file,"%lu bases softclipped\n",total_softclip_count);
+        fprintf(softclip_file,"%lu total number of processed sequence bases\n",total_number_sequence_bases_processed);
+        fclose(softclip_file);
     }
     return 0;
 }
