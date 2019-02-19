@@ -253,7 +253,7 @@ static void output_from_cigar_mdz(
                     assert(mdz[mdzi].op == 'X');
                     assert(strlen(mdz[mdzi].str) == run_comb);
                     int cread = bam_seqi(seq, seq_off);
-                    if(!include_n_mms && run_comb == 1 && cread == 'N') {
+                    if(!include_n_mms && run_comb == 1 && seq_nt16_str[cread] == 'N') {
                         // skip
                     } else {
                         fout << rec->core.tid << ',' << ref_off << ",X,";
