@@ -130,6 +130,12 @@ In addition to the alternate base output, this reports the bases
 that were softclipped at the ends (start/end) of the read.
 These are bases which are left in the sequence but don't align.
 
+The softclipped bases themselves are printed to the file named with the
+prefix passed into the `--alts` option.  The total number of sofclipped
+bases and the total number of bases from the query sequences of alignments
+that that aren't unmapped or secondary are reported to the file named
+with the prefix passed to `--include-softclip`.
+
 Warning: using this option w/o modifiers (e.g. `--only-polya`) 
 could blow up the `--alts` output size as the full softclipped
 sequence is printed in the 4th column in the table above ("Extra info").
