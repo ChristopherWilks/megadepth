@@ -49,7 +49,7 @@ This computes the coverage (same as `--coverage`) under the hood, but won't outp
 ### `bamcount --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
-Typically this is used to produce a BigWig.
+Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
 ### `bamcount --coverage --min-unique-qual <qual_value>`
 
@@ -100,7 +100,7 @@ Output is comma separated with 4 fields:
 | Pos   |                                            Descrtiption |
 |-------|---------------------------------------------------------|
 | 1     | Reference record ID                                     |
-| 2     | POS field (1-based offset of leftmost aligned ref base) |
+| 2     | POS field (0-based offset of leftmost aligned ref base) |
 | 3     | Operation label (see table below)                       |
 | 4     | Extra info (see table below)                            |
 
@@ -123,4 +123,36 @@ See the usage message for options, which can selectively disable some
 of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
+
+### `bamcount --alts --include-softclip <output_file_prefix>`
+
+In addition to the alternate base output, this reports the bases
+that were softclipped at the ends (start/end) of the read.
+These are bases which are left in the sequence but don't align.
+
+Warning: using this option w/o modifiers (e.g. `--only-polya`) 
+could blow up the `--alts` output size as the full softclipped
+sequence is printed in the 4th column in the table above ("Extra info").
+
+### `bamcount --alts --include-softclip <output_file_prefix> --only-polya`
+
+If reporting softclipped bases, this option will limit the report to only
+those bases that have the following:
+
+* Count of bases in the sofclip (column 4 below) has to be >= 3
+* % of base (A/T) of softclipped bases for an alignment >= 80%
+
+No other sofclipped bases are reported.
+
+Output is comma separated with 7 fields:
+
+| Pos   |                                                                      Descrtiption|
+|-------|----------------------------------------------------------------------------------|
+| 1     | Reference record ID                                                              |
+| 2     | POS field (0-based ref offset of either leftmost or rightmost aligned base)      |
+| 3     | Operation label (always "S")                                                     |
+| 4     | Number of bases in the softclip (run length)                                     |
+| 5     | Direction to move from POS ('+' for end of alignment, '-' for start of alignment)|
+| 6     | Base (A/T)                                                                       |
+| 7     | Count of the base in column 6                                                    |
 
