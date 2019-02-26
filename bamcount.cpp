@@ -869,7 +869,7 @@ int main(int argc, const char** argv) {
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     bool include_sc = false;
-    FILE* softclip_file;
+    FILE* softclip_file = nullptr;
     uint64_t total_softclip_count = 0;
     uint64_t total_number_sequence_bases_processed = 0;
     if(has_option(argv, argv+argc, "--include-softclip")) {
