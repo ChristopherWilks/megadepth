@@ -38,7 +38,7 @@ static const void print_version() {
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Usage:\n"
-    "  bamcount <bam> [options]\n"
+    "  bamcount <bam|bw> [options]\n"
     "\n"
     "Options:\n"
     "  -h --help            Show this screen.\n"
@@ -843,9 +843,54 @@ int main(int argc, const char** argv) {
         return 0;
     }
     std::ios::sync_with_stdio(false);
+
+    uint64_t annotated_auc = 0;
+    uint64_t unique_annotated_auc = 0;
+    FILE* auc_file = nullptr;
+    bool just_auc = false;
+    char afn[1024];
+    if(has_option(argv, argv+argc, "--auc")) {
+        just_auc = !has_option(argv, argv+argc, "--coverage");
+        const char *prefix = *get_option(argv, argv+argc, "--auc");
+        sprintf(afn, "%s.auc.tsv", prefix);
+        auc_file = fopen(afn, "w");
+    }
+    //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
+    //maps chromosome to vector of uint arrays storing start/end of annotated intervals
+    annotation_map_t annotations; 
+    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    bool sum_annotation = false;
+    FILE* afp = nullptr;
+    int err = 0;
+    const char* annot_prefix = nullptr;
+    if(has_option(argv, argv+argc, "--annotation")) {
+        sum_annotation = true;
+        const char* afile = *(get_option(argv, argv+argc, "--annotation"));
+        if(!afile) {
+            std::cerr << "No argument to --annotation" << std::endl;
+            return 1;
+        }
+        annot_prefix = *(get_option(argv, argv+argc, "--annotation", 1));
+        if(!annot_prefix) {
+            std::cerr << "No argument to --annotation" << std::endl;
+            return 1;
+        }
+        afp = fopen(afile, "r");
+        err = read_annotation(afp, &annotations);
+        fclose(afp);
+        afp = nullptr;
+        if(!just_auc) {
+            char afn[1024];
+            sprintf(afn, "%s.all.tsv", annot_prefix);
+            afp = fopen(afn, "w");
+        }
+        assert(!annotations.empty());
+        std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+    }
+    assert(err == 0);
     const char *bam_arg = get_positional_n(argv, argv+argc, 0);
     if(!bam_arg) {
-        std::cerr << "ERROR: Could not find <bam> positional arg" << std::endl;
+        std::cerr << "ERROR: Could not find <bam|bw> positional arg" << std::endl;
         return 1;
     }
     std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
@@ -913,34 +958,19 @@ int main(int argc, const char** argv) {
     uint32_t* coverages = nullptr;
     uint32_t* unique_coverages = nullptr;
     bool compute_coverage = false;
-    bool sum_annotation = false;
     bool unique = false;
     int bw_unique_min_qual = 0;
-    FILE* afp = nullptr;
     FILE* uafp = nullptr;
     read2len overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
-    annotation_map_t annotations; 
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
-    uint64_t annotated_auc = 0;
-    uint64_t unique_annotated_auc = 0;
-    FILE* auc_file = nullptr;
-    bool just_auc = false;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
-        just_auc = !has_option(argv, argv+argc, "--coverage");
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
         if(has_option(argv, argv+argc, "--bigwig")) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
-        }
-        if(has_option(argv, argv+argc, "--auc")) {
-            const char *prefix = *get_option(argv, argv+argc, "--auc");
-            char afn[1024];
-            sprintf(afn, "%s.auc.tsv", prefix);
-            auc_file = fopen(afn, "w");
         }
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
@@ -950,38 +980,10 @@ int main(int argc, const char** argv) {
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
-        //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
-        //maps chromosome to vector of uint arrays storing start/end of annotated intervals
-        int err = 0;
-        if(has_option(argv, argv+argc, "--annotation")) {
-            sum_annotation = true;
-            const char* afile = *(get_option(argv, argv+argc, "--annotation"));
-            if(!afile) {
-                std::cerr << "No argument to --annotation" << std::endl;
-                return 1;
-            }
-            const char* prefix = *(get_option(argv, argv+argc, "--annotation", 1));
-            if(!prefix) {
-                std::cerr << "No argument to --annotation" << std::endl;
-                return 1;
-            }
-            afp = fopen(afile, "r");
-            err = read_annotation(afp, &annotations);
-            fclose(afp);
-            afp = nullptr;
-            if(!just_auc) {
-                char afn[1024];
-                sprintf(afn, "%s.all.tsv", prefix);
-                afp = fopen(afn, "w");
-                if(ubwfp) {
-                    sprintf(afn, "%s.unique.tsv", prefix);
-                    uafp = fopen(afn, "w");
-                }
-            }
-            assert(!annotations.empty());
-            std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+        if(ubwfp && afp) {
+            sprintf(afn, "%s.unique.tsv", annot_prefix);
+            uafp = fopen(afn, "w");
         }
-        assert(err == 0);
     }
     char prefix[50]="";
     int32_t ptid = -1;
