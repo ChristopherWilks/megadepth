@@ -893,13 +893,40 @@ int main(int argc, const char** argv) {
         std::cerr << "ERROR: Could not find <bam|bw> positional arg" << std::endl;
         return 1;
     }
-    std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
 
     htsFile *bam_fh = sam_open(bam_arg, "r");
     if(!bam_fh) {
         std::cerr << "ERROR: Could not open " << bam_arg << ": "
                   << std::strerror(errno) << std::endl;
         return 1;
+    }
+   
+    const htsFormat* format = hts_get_format(bam_fh);
+    const char* hts_format_ex = hts_format_file_extension(format);
+    if(strcmp(hts_format_ex, "bam") != 0)
+    {
+        if(bwIsBigWig(strdup(bam_arg), nullptr))
+        {
+            std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
+            //process bigwig for annotation/auc
+            return 0;
+        }
+        else
+        {
+            std::cerr << "ERROR: Input file is not a BAM/BigWig " << bam_arg << std::endl;
+            return 1;
+        }
+    }
+    std::cerr << "Processing BAM: \"" << bam_arg << "\"" << std::endl;
+
+    bam_hdr_t *hdr = sam_hdr_read(bam_fh);
+    if(!hdr) {
+        std::cerr << "ERROR: Could not read header for " << bam_arg
+                  << ": " << std::strerror(errno) << std::endl;
+        return 1;
+    }
+    if(!has_option(argv, argv+argc, "--no-head")) {
+        print_header(hdr);
     }
     //number of bam decompression threads
     //0 == 1 thread for the whole program, i.e.
@@ -934,15 +961,6 @@ int main(int argc, const char** argv) {
     }
 
     size_t recs = 0;
-    bam_hdr_t *hdr = sam_hdr_read(bam_fh);
-    if(!hdr) {
-        std::cerr << "ERROR: Could not read header for " << bam_arg
-                  << ": " << std::strerror(errno) << std::endl;
-        return 1;
-    }
-    if(!has_option(argv, argv+argc, "--no-head")) {
-        print_header(hdr);
-    }
     std::vector<MdzOp> mdzbuf;
     bam1_t *rec = bam_init1();
     if(!rec) {
