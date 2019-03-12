@@ -746,6 +746,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
 }
 
 static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
+//static void sum_annotations<T>(const T* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -753,10 +754,11 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
         long end = (*annotations)[z][1];
         for(j = start; j < end; j++) {
             assert(j < chr_size);
-            sum += coverages[j];
+            sum += (uint32_t) coverages[j];
         }
         (*annotated_auc) = (*annotated_auc) + sum;
         if(!just_auc)
+            //fprintf(ofp, "%s\t%lu\t%lu\t%.0f\n", chrm, start, end, sum);
             fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
     }
 }
@@ -828,6 +830,62 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
     fprintf(outfn, "STAT\tKALLISTO_MEAN_LENGTH\t%.3f\n", kmean);
 }
 
+
+typedef std::unordered_map<std::string, bool> chr2bool;
+static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated_auc, annotation_map_t* amap, chr2bool* annotation_chrs_seen, FILE* afp, bool just_auc) {
+    //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
+    if(bwInit(1<<17) != 0) {
+        fprintf(stderr, "Error in bwInit, exiting\n");
+        return 1;
+    }
+    bigWigFile_t *fp = bwOpen(strdup(fn), NULL, "r");
+    if(!fp) {
+        fprintf(stderr, "Error in opening %s as BigWig file, exiting\n", fn);
+        return 1;
+    }
+    uint32_t i, tid, blocksPerIteration;
+    blocksPerIteration = 5;
+    bwOverlapIterator_t *iter = nullptr;
+    //loop through all the chromosomes in the BW
+    for(tid = 0; tid < fp->cl->nKeys; tid++)
+    {
+        //only process the chromosome if it's in the annotation 
+        if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
+            iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
+            std::vector<long*>* annotations = (*amap)[fp->cl->chrom[tid]];
+            long chr_size = fp->cl->len[tid];
+            while(iter->data) {
+                long z, j;
+                for(z = 0; z < annotations->size(); z++) {
+                    double sum = 0;
+                    long start = (*annotations)[z][0];
+                    long end = (*annotations)[z][1];
+                    for(j = start; j < end; j++) {
+                        assert(j < chr_size);
+                        //TODO fix segfault here
+                        sum += iter->intervals->value[j];
+                    }
+                    (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
+                    if(!just_auc)
+                        fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], start, end, sum);
+                }
+                //sum_annotations(iter->intervals->value, (*annotations)[fp->cl->chrom[tid]], fp->cl->len[tid], fp->cl->chrom[tid], afp, &annotated_auc, just_auc);
+                iter = bwIteratorNext(iter);
+            }
+            (*annotation_chrs_seen)[fp->cl->chrom[tid]] = true;
+            bwIteratorDestroy(iter);
+        }
+    }
+
+    /*for(i=0; i<iter->intervals->l; i++) {
+        printf("chunk %"PRIu32" entry %"PRIu32" %s:%"PRIu32"-%"PRIu32" %f\n", chunk, i, chrom, iter->intervals->start[i], iter->intervals->end[i], iter->intervals->value[i]);
+    }*/
+
+    bwClose(fp);
+    bwCleanup();
+    return 0;
+}
+
 typedef std::unordered_map<std::string, uint64_t> mate2len;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
@@ -844,8 +902,8 @@ int main(int argc, const char** argv) {
     }
     std::ios::sync_with_stdio(false);
 
+    uint64_t all_auc = 0;
     uint64_t annotated_auc = 0;
-    uint64_t unique_annotated_auc = 0;
     FILE* auc_file = nullptr;
     bool just_auc = false;
     char afn[1024];
@@ -858,7 +916,7 @@ int main(int argc, const char** argv) {
     //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     annotation_map_t annotations; 
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    chr2bool annotation_chrs_seen;
     bool sum_annotation = false;
     FILE* afp = nullptr;
     int err = 0;
@@ -909,7 +967,10 @@ int main(int argc, const char** argv) {
         {
             std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
             //process bigwig for annotation/auc
-            return 0;
+            int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc);
+            if(ret == 0)
+                fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+            return ret;
         }
         else
         {
@@ -1046,8 +1107,8 @@ int main(int argc, const char** argv) {
     }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     //calculates AUC automatically
-    uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
+    uint64_t unique_annotated_auc = 0;
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
     uint64_t total_number_bases_processed = 0;
