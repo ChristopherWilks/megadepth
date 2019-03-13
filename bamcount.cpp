@@ -853,55 +853,44 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
     {
         //only process the chromosome if it's in the annotation 
         if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
-            //printf("start of chrm %d\n",tid);
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
+            if(!iter->data)
+            {
+                fprintf(stderr, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                continue;
+            }
+            uint32_t num_intervals = iter->intervals->l;
+            uint32_t istart = iter->intervals->start[0];
+            uint32_t iend = iter->intervals->end[num_intervals-1];
             std::vector<long*>* annotations = (*amap)[fp->cl->chrom[tid]];
             long z, j, k;
+            long last_j = 0;
             //loop through annotation intervals as outer loop
             for(z = 0; z < annotations->size(); z++) {
                 double sum = 0;
                 long start = (*annotations)[z][0];
                 long ostart = start;
                 long end = (*annotations)[z][1];
-                //printf("new interval: %d-%d\n",start,end);
-                //loop through BW interval blocks as inner loop
-                while(iter->data) {
-                    uint32_t num_intervals = iter->intervals->l;
-                    uint32_t istart = iter->intervals->start[0];
-                    uint32_t iend = iter->intervals->end[num_intervals-1];
-                    //printf("iter (%d): %d-%d\n",num_intervals,istart,iend);
-                    //this annotation interval is beyond this block
-                    if(start >= iend)
+                while(start < iter->intervals->start[last_j])
+                    last_j--;
+                for(j = last_j; j < num_intervals; j++)
+                {
+                    istart = iter->intervals->start[j];
+                    iend = iter->intervals->end[j];
+                    if(start >= istart && start < iend)
                     {
-                        iter = bwIteratorNext(iter);
-                        continue;
+                        long last_k = end > iend ? iend : end;
+                        for(k = start; k < last_k; k++)
+                            sum += iter->intervals->value[j];
+                        //move start up
+                        if(k < end)
+                            start = k;
+                        //break out if we've hit the end of this annotation interval
+                        if(k >= end)
+                            break;
                     }
-                    //must stay within bounds of BigWig iterator block
-                    for(j = 0; j < num_intervals; j++)
-                    {
-                        istart = iter->intervals->start[j];
-                        iend = iter->intervals->end[j];
-                        if(start >= istart && start < iend)
-                        {
-                            long last_k = end > iend ? iend : end;
-                            for(k = start; k < last_k; k++)
-                                sum += iter->intervals->value[j];
-                            //break out if we've hit the end of this annotation interval
-                            if(k >= end)
-                                break;
-                            //move start up
-                            if(k < end)
-                                start = k;
-                        }
-                    }
-                    //done with this annotation interval, keep iter and break out of while loop
-                    if(end <= iend)
-                        break;
-                    //only move the iterator if we need the next block for this annotation interval
-                    iend = iter->intervals->end[num_intervals-1];
-                    if(end > iend)
-                        iter = bwIteratorNext(iter);
                 }
+                last_j = j;
                 (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
                 if(!just_auc)
                     fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], ostart, end, sum);
