@@ -854,32 +854,53 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
             std::vector<long*>* annotations = (*amap)[fp->cl->chrom[tid]];
             long chr_size = fp->cl->len[tid];
-            while(iter->data) {
-                long z, j;
-                for(z = 0; z < annotations->size(); z++) {
-                    double sum = 0;
-                    long start = (*annotations)[z][0];
-                    long end = (*annotations)[z][1];
-                    for(j = start; j < end; j++) {
-                        assert(j < chr_size);
-                        //TODO fix segfault here
-                        sum += iter->intervals->value[j];
+            long z, j, k;
+            for(z = 0; z < annotations->size(); z++) {
+                double sum = 0;
+                long start = (*annotations)[z][0];
+                long ostart = start;
+                long end = (*annotations)[z][1];
+                while(iter->data) {
+                    uint32_t num_intervals = iter->intervals->l;
+                    uint32_t istart = iter->intervals->start[0];
+                    uint32_t iend = iter->intervals->end[num_intervals-1];
+                    //this annotation interval is beyond this block
+                    if(start >= iend)
+                    {
+                        iter = bwIteratorNext(iter);
+                        continue;
                     }
-                    (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
-                    if(!just_auc)
-                        fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], start, end, sum);
+                    //must stay within bounds of BigWig iterator block
+                    for(j = 0; j < num_intervals; j++)
+                    {
+                        istart = iter->intervals->start[j];
+                        iend = iter->intervals->end[j];
+                        if(start >= istart && start < iend)
+                        {
+                            long last_k = end > iend ? iend : end;
+                            for(k = start; k < last_k; k++)
+                                sum += iter->intervals->value[j];
+                            //move start up
+                            if(k < end)
+                                start = k;
+                        }
+                    }
+                    //done with this annotation interval, keep iter and break out of while loop
+                    if(end <= iend)
+                        break;
+                    //only move the iterator if we need the next block for this annotation interval
+                    iend = iter->intervals->end[num_intervals-1];
+                    if(end > iend)
+                        iter = bwIteratorNext(iter);
                 }
-                //sum_annotations(iter->intervals->value, (*annotations)[fp->cl->chrom[tid]], fp->cl->len[tid], fp->cl->chrom[tid], afp, &annotated_auc, just_auc);
-                iter = bwIteratorNext(iter);
+                (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
+                if(!just_auc)
+                    fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], ostart, end, sum);
             }
             (*annotation_chrs_seen)[fp->cl->chrom[tid]] = true;
             bwIteratorDestroy(iter);
         }
     }
-
-    /*for(i=0; i<iter->intervals->l; i++) {
-        printf("chunk %"PRIu32" entry %"PRIu32" %s:%"PRIu32"-%"PRIu32" %f\n", chunk, i, chrom, iter->intervals->start[i], iter->intervals->end[i], iter->intervals->value[i]);
-    }*/
 
     bwClose(fp);
     bwCleanup();
@@ -968,6 +989,7 @@ int main(int argc, const char** argv) {
             std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
             //process bigwig for annotation/auc
             int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc);
+            fclose(afp);
             if(ret == 0)
                 fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
             return ret;
