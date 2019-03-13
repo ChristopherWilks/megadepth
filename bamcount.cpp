@@ -844,13 +844,16 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
         return 1;
     }
     uint32_t i, tid, blocksPerIteration;
-    blocksPerIteration = 5;
+    //ask for huge # of blocks to ensure we get all in one go
+    blocksPerIteration = 1000000000;
+    //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
     //loop through all the chromosomes in the BW
     for(tid = 0; tid < fp->cl->nKeys; tid++)
     {
         //only process the chromosome if it's in the annotation 
         if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
+            //printf("start of chrm %d\n",tid);
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
             std::vector<long*>* annotations = (*amap)[fp->cl->chrom[tid]];
             long z, j, k;
@@ -860,11 +863,13 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                 long start = (*annotations)[z][0];
                 long ostart = start;
                 long end = (*annotations)[z][1];
+                //printf("new interval: %d-%d\n",start,end);
                 //loop through BW interval blocks as inner loop
                 while(iter->data) {
                     uint32_t num_intervals = iter->intervals->l;
                     uint32_t istart = iter->intervals->start[0];
                     uint32_t iend = iter->intervals->end[num_intervals-1];
+                    //printf("iter (%d): %d-%d\n",num_intervals,istart,iend);
                     //this annotation interval is beyond this block
                     if(start >= iend)
                     {
@@ -993,6 +998,7 @@ int main(int argc, const char** argv) {
             std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
             //process bigwig for annotation/auc
             int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc);
+            output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             fclose(afp);
             if(ret == 0)
                 fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
