@@ -853,13 +853,14 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
         if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
             std::vector<long*>* annotations = (*amap)[fp->cl->chrom[tid]];
-            long chr_size = fp->cl->len[tid];
             long z, j, k;
+            //loop through annotation intervals as outer loop
             for(z = 0; z < annotations->size(); z++) {
                 double sum = 0;
                 long start = (*annotations)[z][0];
                 long ostart = start;
                 long end = (*annotations)[z][1];
+                //loop through BW interval blocks as inner loop
                 while(iter->data) {
                     uint32_t num_intervals = iter->intervals->l;
                     uint32_t istart = iter->intervals->start[0];
@@ -880,6 +881,9 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                             long last_k = end > iend ? iend : end;
                             for(k = start; k < last_k; k++)
                                 sum += iter->intervals->value[j];
+                            //break out if we've hit the end of this annotation interval
+                            if(k >= end)
+                                break;
                             //move start up
                             if(k < end)
                                 start = k;
