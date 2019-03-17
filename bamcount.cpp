@@ -50,6 +50,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Uses prefix to name the fastq(s)\n"
     "  --filter-out         SAM bit flags to filter out\n"
     "  --filter-in          SAM bit flags to filter in\n"
+    "  --re-reverse         If read is reversed in alignment, re-reverse it in output\n"
     "  --one-file           If you know file is not paired or just want all reads in one file\n"
     "\n"
     "Non-reference summaries:\n"
@@ -155,7 +156,18 @@ static inline int polya_check(const uint8_t *str, size_t off, size_t run, char *
     return count;
 }
 
-static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
+//const char seq_nt16_str[] = "=ACMGRSVTWYHKDBN";
+static const char seq_rev_nt16_str[] = "=TGMCRSVAWYHKDBN";
+static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run, bool reverse=false) {
+    if(reverse) {
+        int i=(off+run)-1;
+        while(((int) off) <= i) {
+            int io = bam_seqi(str, i);
+            os << seq_rev_nt16_str[io];
+            i--;
+        }
+        return os;
+    }
     for(size_t i = off; i < off + run; i++) {
         os << seq_nt16_str[bam_seqi(str, i)];
     }
@@ -172,6 +184,21 @@ static inline std::ostream& kstring_out(std::ostream& os, const kstring_t *str) 
 static inline std::ostream& cstr_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
     for(size_t i = off; i < off + run; i++) {
         os << (char)str[i];
+    }
+    return os;
+}
+
+static inline std::ostream& qstr_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run, bool reverse=false) {
+    if(reverse) {
+        int i=(off+run)-1;
+        while(((int) off) <= i) {
+            os << (char)(str[i]+33);
+            i--;
+        }
+        return os;
+    }   
+    for(size_t i = off; i < off + run; i++) {
+        os << (char)(str[i]+33);
     }
     return os;
 }
@@ -836,7 +863,6 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
 }
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
-typedef std::unordered_map<std::string, uint8_t> str2byte;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
@@ -880,9 +906,10 @@ int main(int argc, const char** argv) {
     std::fstream fq2_file;
     bool bam2fastq = false;
     bool one_file = false;
-    str2byte read_seen;
+    bool re_reversed = false;
     if(has_option(argv, argv+argc, "--bam2fastq")) {
         bam2fastq = true;
+        re_reversed = has_option(argv, argv+argc, "--re-reverse");
         one_file = has_option(argv, argv+argc, "--one-file");
         const char *prefix = *get_option(argv, argv+argc, "--bam2fastq");
         char afn[1024];
@@ -1082,24 +1109,19 @@ int main(int argc, const char** argv) {
                 continue;
             if(filter_out > -1 && (c->flag & filter_out) == filter_out)
                 continue;
-            std::ostream* outfh = &fq1_file;
-            int midx = 1;
-            if(!one_file && read_seen.find(qname) != read_seen.end()) {
-                outfh = &fq2_file;
-                int midx = 2;
-                read_seen.erase(qname);
-            }
-            else if(!one_file)
-                read_seen[qname] = 1;
+            bool reversed = (c->flag & 16) != 0;
+            bool last_segment = (c->flag & 128) != 0;
+            std::ostream* outfh = last_segment ? &fq2_file : &fq1_file;
+            int midx = last_segment ? 2 : 1;
             uint8_t *seq = bam_get_seq(rec);
             (*outfh) << "@" << qname;
             if(!one_file)            
                 (*outfh) << "/" << midx;
             (*outfh) << "\n";
-            seq_substring(*outfh, seq, 0, (size_t)c->l_qseq);
+            seq_substring(*outfh, seq, 0, (size_t)c->l_qseq, reversed);
             (*outfh) << "\n+\n";
             uint8_t *qual = bam_get_qual(rec);
-            cstr_substring(*outfh, qual, 0, (size_t)c->l_qseq);
+            qstr_substring(*outfh, qual, 0, (size_t)c->l_qseq, reversed);
             (*outfh) << "\n";
             continue;
         }
