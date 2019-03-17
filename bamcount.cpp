@@ -45,6 +45,13 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --version            Show version.\n"
     "  --threads            # of threads to do BAM decompression\n"
     "\n"
+    "Extract reads from BAM into FASTQ (exclusive of all other modes):\n"
+    "  --bam2fastq <prefix> Extract all reads from the passed in BAM and output as FASTQs\n"
+    "                       Uses prefix to name the fastq(s)\n"
+    "  --filter-out         SAM bit flags to filter out\n"
+    "  --filter-in          SAM bit flags to filter in\n"
+    "  --one-file           If you know file is not paired or just want all reads in one file\n"
+    "\n"
     "Non-reference summaries:\n"
     "  --alts <prefix>              Print differing from ref per-base coverages\n"
     "                               Writes to a CSV file <prefix>.alts.tsv\n"
@@ -829,6 +836,7 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
 }
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
+typedef std::unordered_map<std::string, uint8_t> str2byte;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
@@ -865,6 +873,39 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
+
+    int filter_out = -1;
+    int filter_in = -1;
+    std::fstream fq1_file;
+    std::fstream fq2_file;
+    bool bam2fastq = false;
+    bool one_file = false;
+    str2byte read_seen;
+    if(has_option(argv, argv+argc, "--bam2fastq")) {
+        bam2fastq = true;
+        one_file = has_option(argv, argv+argc, "--one-file");
+        const char *prefix = *get_option(argv, argv+argc, "--bam2fastq");
+        char afn[1024];
+        if(!one_file) {
+            sprintf(afn, "%s_1.fastq", prefix);
+            fq1_file.open(afn, std::fstream::out);
+            sprintf(afn, "%s_2.fastq", prefix);
+            fq2_file.open(afn, std::fstream::out);
+        }
+        else {
+            sprintf(afn, "%s.fastq", prefix);
+            fq1_file.open(afn, std::fstream::out);
+        }
+        if(has_option(argv, argv+argc, "--filter-out")) {
+            const char** filter_out_ = get_option(argv, argv+argc, "--filter-out");
+            filter_out = atoi(*filter_out_);
+        }
+        if(has_option(argv, argv+argc, "--filter-in")) {
+            const char** filter_in_ = get_option(argv, argv+argc, "--filter-in");
+            filter_in = atoi(*filter_in_);
+        }
+    }
+
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
@@ -1034,6 +1075,34 @@ int main(int argc, const char** argv) {
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
+        //read name
+        char* qname = bam_get_qname(rec);
+        if(bam2fastq) {
+            if(filter_in > -1 && (c->flag & filter_in) != filter_in)
+                continue;
+            if(filter_out > -1 && (c->flag & filter_out) == filter_out)
+                continue;
+            std::ostream* outfh = &fq1_file;
+            int midx = 1;
+            if(!one_file && read_seen.find(qname) != read_seen.end()) {
+                outfh = &fq2_file;
+                int midx = 2;
+                read_seen.erase(qname);
+            }
+            else if(!one_file)
+                read_seen[qname] = 1;
+            uint8_t *seq = bam_get_seq(rec);
+            (*outfh) << "@" << qname;
+            if(!one_file)            
+                (*outfh) << "/" << midx;
+            (*outfh) << "\n";
+            seq_substring(*outfh, seq, 0, (size_t)c->l_qseq);
+            (*outfh) << "\n+\n";
+            uint8_t *qual = bam_get_qual(rec);
+            cstr_substring(*outfh, qual, 0, (size_t)c->l_qseq);
+            (*outfh) << "\n";
+            continue;
+        }
         //filter OUT unmapped and secondary alignments
         if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
             reads_processed++;
@@ -1045,8 +1114,6 @@ int main(int argc, const char** argv) {
             int32_t end_refpos = -1;
             //base-0 mate start coordinate
             int32_t mrefpos = rec->core.mpos;
-            //read name
-            char* qname = bam_get_qname(rec);
             //used for adjusting the fragment lengths
             int32_t total_intron_len = 0;
             //ref chrm/contig ID
@@ -1260,6 +1327,11 @@ int main(int argc, const char** argv) {
         fclose(afp);
     if(uafp)
         fclose(uafp);
+    if(bam2fastq) {
+        fq1_file.close();
+        if(!one_file)
+            fq2_file.close();
+    }
     fprintf(stdout,"Read %lu records\n",recs);
     if(count_bases) {
         fprintf(stdout,"%lu records passed filters\n",reads_processed);
