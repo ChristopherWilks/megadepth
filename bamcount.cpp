@@ -861,8 +861,20 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
     fprintf(outfn, "STAT\tKALLISTO_COUNT\t%lu\n", kcount);
     fprintf(outfn, "STAT\tKALLISTO_MEAN_LENGTH\t%.3f\n", kmean);
 }
+            
+void output_read_sequence_and_qualities(char* qname, int midx, uint8_t* seq, uint8_t* qual, size_t l_qseq, bool reversed, std::ostream* outfh, bool one_file) {
+    (*outfh) << "@" << qname;
+    if(!one_file)            
+        (*outfh) << "/" << midx;
+    (*outfh) << "\n";
+    seq_substring(*outfh, seq, 0, l_qseq, reversed);
+    (*outfh) << "\n+\n";
+    qstr_substring(*outfh, qual, 0, l_qseq, reversed);
+    (*outfh) << "\n";
+}
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
+typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
@@ -902,11 +914,13 @@ int main(int argc, const char** argv) {
 
     int filter_out = -1;
     int filter_in = -1;
+    std::fstream fq0_file;
     std::fstream fq1_file;
     std::fstream fq2_file;
     bool bam2fastq = false;
     bool one_file = false;
     bool re_reversed = false;
+    str2str read_mate;
     if(has_option(argv, argv+argc, "--bam2fastq")) {
         bam2fastq = true;
         re_reversed = has_option(argv, argv+argc, "--re-reverse");
@@ -919,10 +933,8 @@ int main(int argc, const char** argv) {
             sprintf(afn, "%s_2.fastq", prefix);
             fq2_file.open(afn, std::fstream::out);
         }
-        else {
-            sprintf(afn, "%s.fastq", prefix);
-            fq1_file.open(afn, std::fstream::out);
-        }
+        sprintf(afn, "%s.fastq", prefix);
+        fq0_file.open(afn, std::fstream::out);
         if(has_option(argv, argv+argc, "--filter-out")) {
             const char** filter_out_ = get_option(argv, argv+argc, "--filter-out");
             filter_out = atoi(*filter_out_);
@@ -1109,20 +1121,40 @@ int main(int argc, const char** argv) {
                 continue;
             if(filter_out > -1 && (c->flag & filter_out) == filter_out)
                 continue;
-            bool reversed = (c->flag & 16) != 0;
-            bool last_segment = (c->flag & 128) != 0;
-            std::ostream* outfh = last_segment ? &fq2_file : &fq1_file;
-            int midx = last_segment ? 2 : 1;
+            bool reversed = re_reversed && (c->flag & 16) != 0;
+            bool multi_segment = (c->flag & 1) != 0;
             uint8_t *seq = bam_get_seq(rec);
-            (*outfh) << "@" << qname;
-            if(!one_file)            
-                (*outfh) << "/" << midx;
-            (*outfh) << "\n";
-            seq_substring(*outfh, seq, 0, (size_t)c->l_qseq, reversed);
-            (*outfh) << "\n+\n";
             uint8_t *qual = bam_get_qual(rec);
-            qstr_substring(*outfh, qual, 0, (size_t)c->l_qseq, reversed);
-            (*outfh) << "\n";
+            auto iter = read_mate.find(qname);
+            //found a mate, print out both
+            if(!one_file && multi_segment && iter != read_mate.end()) {
+                bool last_segment = (c->flag & 128) != 0;
+                uint8_t* seq_qual = iter->second;
+                const char* mate_qname = iter->first.c_str();
+                std::ostream* outfh = last_segment ? &fq1_file : &fq2_file;
+                int midx = last_segment ? 1 : 2;
+                int seq_len = strlen((char*) (seq_qual+1));
+                bool mate_reversed = seq_qual[0];
+                output_read_sequence_and_qualities(qname, midx, seq_qual+1, (seq_qual+seq_len)+2, seq_len, mate_reversed, outfh, one_file);
+                delete read_mate[qname];
+                read_mate.erase(qname);
+
+                midx = last_segment ? 2 : 1;
+                outfh = last_segment ? &fq2_file : &fq1_file;
+                output_read_sequence_and_qualities(qname, midx, seq, qual, c->l_qseq, reversed, outfh, one_file);
+            }
+            else if(!one_file && multi_segment) {
+                uint8_t* seq_qual = new uint8_t[(2*c->l_qseq)+3];
+                seq_qual[0]=reversed;
+                memcpy(seq_qual+1, seq, c->l_qseq);
+                seq_qual[c->l_qseq+1]='\0';
+                memcpy(seq_qual+c->l_qseq+2, qual, c->l_qseq);
+                seq_qual[(2*c->l_qseq)+3]='\0';
+                read_mate[qname] = seq_qual;
+            }
+            else
+                output_read_sequence_and_qualities(qname, 1, seq, qual, c->l_qseq, reversed, &fq0_file, one_file);
+            
             continue;
         }
         //filter OUT unmapped and secondary alignments
@@ -1350,9 +1382,11 @@ int main(int argc, const char** argv) {
     if(uafp)
         fclose(uafp);
     if(bam2fastq) {
-        fq1_file.close();
-        if(!one_file)
+        fq0_file.close();
+        if(!one_file) {
+            fq1_file.close();
             fq2_file.close();
+        }
     }
     fprintf(stdout,"Read %lu records\n",recs);
     if(count_bases) {
