@@ -37,6 +37,19 @@ While any given subcommand may not be particularly fast on its own, doing them a
 Subcommand `--coverage` is the only subcommand that will output a BigWig file (currently).
 However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
 
+### `bamcount --bam2fastq <output_file_prefix>`
+
+Entirely separate mode from the other subcommands, this takes a BAM and outputs one or more FASTQ files (uncompressed).
+
+Additional options:
+
+ * `--filter-out <int>` same as `samtools -F <int>`, skips alignments with that bitflag set
+ * `--filter-in <int>`  same as `samtools -f <int>`, only includes alignments with that bitflag set 
+ * `--re-reverse` same as `Picard SamToFastq -RE_REVERSE` will reverse complement sequences which were aligned to the reverse strand
+ * `--one-file` force output to one FASTQ file, even if paired
+ 
+ If `--one-file` is not set, `bamcount` will attempt to output all paired sequences to 2 separate FASTQ files and any non-paired sequences to a 3rd file.
+
 ### `bamcount --auc <output_file_prefix>`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
