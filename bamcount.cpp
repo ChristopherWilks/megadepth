@@ -518,18 +518,32 @@ static uint64_t print_array(const char* prefix,
     return auc;
 }
 
-//mostly cribed from htslib/sam.c
-//calculates the mapped length of an alignment
-static const uint32_t bam_cigar2maplen(int n_cigar, const uint32_t *cigar)
-{
-    int k;
-    uint32_t mlen = 0;
-    for (k = 0; k < n_cigar; ++k) {
+//generic function to loop through cigar
+//and for each operation/lenth, call a list of functions to process
+typedef std::vector<void*> args_list;
+typedef void (*callback)(const int, const int, args_list*);
+typedef std::vector<callback> callback_list;
+static void process_cigar(int n_cigar, const uint32_t *cigar, callback_list* callbacks, args_list* outlist) {
+    for (int k = 0; k < n_cigar; ++k) {
         int type = bam_cigar_type(bam_cigar_op(cigar[k]));
         int len = bam_cigar_oplen(cigar[k]);
-        if ((type & 1) && (type & 2)) mlen += len;
+        int i = 0;
+        //now call each callback function
+        for(auto const& func : *callbacks) {
+            (*func)(type, len, (args_list*) (*outlist)[i]);
+            i++;
+        }
     }
-    return mlen;
+}
+
+//mostly cribed from htslib/sam.c
+//calculates the mapped length of an alignment
+static void maplength(const int type, const int len, args_list* out) {
+    if ((type & 1) && (type & 2)) *((uint32_t*) (*out)[0]) += len;
+}
+
+static void end_genomic_coord(const int type, const int len, args_list* out) {
+    if (type & 2) *((uint32_t*) (*out)[0]) += len;
 }
 
 static const int32_t align_length(const bam1_t *rec) {
@@ -945,6 +959,9 @@ int main(int argc, const char** argv) {
         }
     }
 
+    args_list maplen_outlist;
+    uint64_t total_number_bases_processed = 0;
+    maplen_outlist.push_back(&total_number_bases_processed);
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
@@ -1110,12 +1127,20 @@ int main(int argc, const char** argv) {
     uint64_t unique_auc = 0;
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
-    uint64_t total_number_bases_processed = 0;
+
+    //setup list of callbacks for the process_cigar()
+    //this is so we only have to walk the cigar for each alignment ~1 time
+    callback_list process_cigar_callbacks;
+    process_cigar_callbacks.push_back(maplength);
+    args_list process_cigar_output_args;
+    process_cigar_output_args.push_back(&maplen_outlist);
+
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
         //read name
         char* qname = bam_get_qname(rec);
+        //*******bam2fastq
         if(bam2fastq) {
             if(filter_in > -1 && (c->flag & filter_in) != filter_in)
                 continue;
@@ -1157,6 +1182,7 @@ int main(int argc, const char** argv) {
             
             continue;
         }
+        //*******Main Quantification Conditional (for ref & alt coverage, frag dist)
         //filter OUT unmapped and secondary alignments
         if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
             reads_processed++;
@@ -1174,13 +1200,16 @@ int main(int argc, const char** argv) {
             int32_t tid = rec->core.tid;
             
             //mainly for debuging purposes 
-            if(count_bases)
-                total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
+            if(count_bases) {
+                process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
+                //process_cigar(rec->core.n_cigar, bam_get_cigar(rec), maplength, &maplen_outlist);
+                //total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
+            }
 
             if(softclip_file)
                 total_number_sequence_bases_processed += c->l_qseq;
 
-            //track coverage
+            //*******Reference coverage tracking
             if(compute_coverage) {
                 if(tid != ptid) {
                     if(ptid != -1) {
@@ -1213,7 +1242,7 @@ int main(int argc, const char** argv) {
             if(report_end_coord)
                 fprintf(stdout, "%s\t%d\n", qname, end_refpos);
 
-            //track fragment lengths per chromosome
+            //*******Fragment length distribution (per chromosome)
             if(print_frag_dist) {
                 //csaw's getPESizes criteria
                 //first, don't count read that's got problems
@@ -1243,6 +1272,7 @@ int main(int argc, const char** argv) {
                 }
             }
 
+            //*******Start/end positions (for TSS,TES)
             //track read starts/ends
             //if minimum quality is set, then we only track starts/ends for alignments that pass
             if(compute_ends) {
@@ -1279,6 +1309,7 @@ int main(int argc, const char** argv) {
                 kstring_out(std::cout, &sambuf);
                 std::cout << '\n';
             }
+            //*******Alternate base coverages, soft clipping output
             //track alt. base coverages
             if(compute_alts) {
                 if(first) {
@@ -1391,7 +1422,8 @@ int main(int argc, const char** argv) {
     fprintf(stdout,"Read %lu records\n",recs);
     if(count_bases) {
         fprintf(stdout,"%lu records passed filters\n",reads_processed);
-        fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
+        fprintf(stdout,"%lu bases in alignments which passed filters\n",*((uint64_t*) maplen_outlist[0]));
+        //fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
     }
     if(softclip_file) {
         fprintf(softclip_file,"%lu bases softclipped\n",total_softclip_count);
