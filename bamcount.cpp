@@ -1389,11 +1389,14 @@ int main(int argc, const char** argv) {
                 char* jx_str = nullptr;
                 if(sz >= 4 || (paired && sz >= 2)) {
                     jx_str = new char[2048];
-                    int ix = sprintf(jx_str, "%s\t%d\t%d", hdr->target_name[tid], refpos, (c->flag & 16) != 0);
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t", hdr->target_name[tid], refpos, (c->flag & 16) != 0);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = (*cl)[jx];
-                        if(jx % 2 == 0)
-                            ix += sprintf(jx_str+ix, "\t%d-", coord);
+                        if(jx % 2 == 0) {
+                            if(jx >=2 )
+                                ix += sprintf(jx_str+ix, ",");
+                            ix += sprintf(jx_str+ix, "%d-", coord);
+                        }
                         else
                             ix += sprintf(jx_str+ix, "%d", coord);
                     }
