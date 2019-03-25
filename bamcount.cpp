@@ -45,6 +45,10 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --version            Show version.\n"
     "  --threads            # of threads to do BAM decompression\n"
     "\n"
+    "Extract basic junction information from the BAM, including co-occurrence\n"
+    "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
+    "                       Writes to a TSV file <prefix>.jxs.tsv\n"
+    "\n"
     "Extract reads from BAM into FASTQ (exclusive of all other modes):\n"
     "  --bam2fastq <prefix> Extract all reads from the passed in BAM and output as FASTQs\n"
     "                       Uses prefix to name the fastq(s)\n"
@@ -525,12 +529,12 @@ typedef void (*callback)(const int, const int, args_list*);
 typedef std::vector<callback> callback_list;
 static void process_cigar(int n_cigar, const uint32_t *cigar, callback_list* callbacks, args_list* outlist) {
     for (int k = 0; k < n_cigar; ++k) {
-        int type = bam_cigar_type(bam_cigar_op(cigar[k]));
-        int len = bam_cigar_oplen(cigar[k]);
+        const int cigar_op = bam_cigar_op(cigar[k]);
+        const int len = bam_cigar_oplen(cigar[k]);
         int i = 0;
         //now call each callback function
         for(auto const& func : *callbacks) {
-            (*func)(type, len, (args_list*) (*outlist)[i]);
+            (*func)(cigar_op, len, (args_list*) (*outlist)[i]);
             i++;
         }
     }
@@ -538,11 +542,13 @@ static void process_cigar(int n_cigar, const uint32_t *cigar, callback_list* cal
 
 //mostly cribed from htslib/sam.c
 //calculates the mapped length of an alignment
-static void maplength(const int type, const int len, args_list* out) {
+static void maplength(const int op, const int len, args_list* out) {
+    int type = bam_cigar_type(op);
     if ((type & 1) && (type & 2)) *((uint32_t*) (*out)[0]) += len;
 }
 
-static void end_genomic_coord(const int type, const int len, args_list* out) {
+static void end_genomic_coord(const int op, const int len, args_list* out) {
+    int type = bam_cigar_type(op);
     if (type & 2) *((uint32_t*) (*out)[0]) += len;
 }
 
@@ -550,6 +556,24 @@ static const int32_t align_length(const bam1_t *rec) {
     //bam_endpos processes the whole cigar string
     return bam_endpos(rec) - rec->core.pos;
 }
+
+typedef std::unordered_map<std::string, char*> str2cstr;
+typedef std::vector<uint32_t> coords;
+static void extract_junction(const int op, const int len, args_list* out) {
+    uint32_t* base = (uint32_t*) (*out)[0];
+    //not an intron
+    if(op != BAM_CREF_SKIP) {
+        //but track the length if consuming the ref
+        if(bam_cigar_type(op) & 2)
+            (*base) += len;
+        return;
+    }
+    coords* jxs = (coords*) (*out)[1];
+    jxs->push_back(*base);
+    (*base) += len;
+    jxs->push_back(*base);
+}
+
 
 typedef std::unordered_map<std::string, uint32_t*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
@@ -925,6 +949,11 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
+    
+    //setup list of callbacks for the process_cigar()
+    //this is so we only have to walk the cigar for each alignment ~1 time
+    callback_list process_cigar_callbacks;
+    args_list process_cigar_output_args;
 
     int filter_out = -1;
     int filter_in = -1;
@@ -963,6 +992,10 @@ int main(int argc, const char** argv) {
     uint64_t total_number_bases_processed = 0;
     maplen_outlist.push_back(&total_number_bases_processed);
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
+    if(count_bases) {
+        process_cigar_callbacks.push_back(maplength);
+        process_cigar_output_args.push_back(&maplen_outlist);
+    }
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     bool include_sc = false;
@@ -1121,6 +1154,23 @@ int main(int argc, const char** argv) {
         alts_file.open(afn, std::fstream::out);
         compute_alts = true;
     }
+    FILE* jxs_file = nullptr;
+    bool extract_junctions = false;
+    uint32_t len = 0;
+    args_list junctions;
+    coords jx_coords;
+    str2cstr jx_pairs;
+    if(has_option(argv, argv+argc, "--junctions")) {
+        junctions.push_back(&len);
+        junctions.push_back(&jx_coords);
+        const char *prefix = *get_option(argv, argv+argc, "--junctions");
+        char afn[1024];
+        sprintf(afn, "%s.jxs.tsv", prefix);
+        jxs_file = fopen(afn, "w");
+        extract_junctions = true;
+        process_cigar_callbacks.push_back(extract_junction);
+        process_cigar_output_args.push_back(&junctions);
+    }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     //calculates AUC automatically
     uint64_t all_auc = 0;
@@ -1128,12 +1178,6 @@ int main(int argc, const char** argv) {
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
 
-    //setup list of callbacks for the process_cigar()
-    //this is so we only have to walk the cigar for each alignment ~1 time
-    callback_list process_cigar_callbacks;
-    process_cigar_callbacks.push_back(maplength);
-    args_list process_cigar_output_args;
-    process_cigar_output_args.push_back(&maplen_outlist);
 
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
@@ -1198,14 +1242,9 @@ int main(int argc, const char** argv) {
             int32_t total_intron_len = 0;
             //ref chrm/contig ID
             int32_t tid = rec->core.tid;
-            
-            //mainly for debuging purposes 
-            if(count_bases) {
-                process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
-                //process_cigar(rec->core.n_cigar, bam_get_cigar(rec), maplength, &maplen_outlist);
-                //total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
-            }
+            int32_t tlen = rec->core.isize;
 
+            
             if(softclip_file)
                 total_number_sequence_bases_processed += c->l_qseq;
 
@@ -1338,7 +1377,66 @@ int main(int argc, const char** argv) {
                             print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
             }
+            //*******Run various cigar-related functions for 1 pass through the cigar string
+            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
+
+            //*******Extract jx co-occurrences (not all junctions though)
+            if(extract_junctions) {
+                bool paired = (c->flag & BAM_FPAIRED) != 0;
+                //output
+                coords* cl = (coords*) junctions[1];
+                int sz = cl->size();
+                char* jx_str = nullptr;
+                if(sz >= 4 || (paired && sz >= 2)) {
+                    jx_str = new char[2048];
+                    int ix = sprintf(jx_str, "%s\t%d\t%d", hdr->target_name[tid], refpos, (c->flag & 16) != 0);
+                    for(int jx = 0; jx < sz; jx++) {
+                        uint32_t coord = (*cl)[jx];
+                        if(jx % 2 == 0)
+                            ix += sprintf(jx_str+ix, "\t%d-", coord);
+                        else
+                            ix += sprintf(jx_str+ix, "%d", coord);
+                    }
+                }
+                if(paired) {
+                    //first mate
+                    if(tlen > 0 && sz >= 2) {
+                        jx_pairs[qname] = jx_str;
+                    }
+                    //2nd mate
+                    else if(tlen < 0) {
+                        bool had_prev_mate = false;
+                        //1st mate with > 0 introns
+                        if(jx_pairs.find(qname) != jx_pairs.end()) {
+                            char* pre_jx_str = jx_pairs[qname];
+                            fprintf(jxs_file, "%s\t%s", qname, pre_jx_str);
+                            delete pre_jx_str;
+                            jx_pairs.erase(qname);
+                            had_prev_mate = true;
+                            if(sz == 0)
+                                fprintf(jxs_file, "\n");
+                        }
+                        //2nd mate with > 0 introns
+                        if(sz >= 2) {
+                            if(!had_prev_mate)
+                                fprintf(jxs_file, "%s", qname);
+                            fprintf(jxs_file, "\t%s\n", jx_str);
+                        }
+                    }
+                }
+                //not paired, only care if we have 2 or more introns
+                else if(sz >= 4)
+                    fprintf(jxs_file, "%s\n", jx_str);
+                //fprintf(jxs_file, "%s\t%s\t%d\t%d", qname, hdr->target_name[tid], refpos, (c->flag & 16) != 0);
+                //fprintf(jxs_file, "\n");
+                //reset for next alignment
+                *((uint32_t*) junctions[0]) = 0;
+                cl->clear();
+            }
         }
+    }
+    if(jxs_file) {
+        fclose(jxs_file);
     }
     if(print_frag_dist) {
         if(ptid != -1)
