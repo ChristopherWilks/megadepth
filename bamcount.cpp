@@ -527,10 +527,14 @@ static uint64_t print_array(const char* prefix,
 typedef std::vector<void*> args_list;
 typedef void (*callback)(const int, const int, args_list*);
 typedef std::vector<callback> callback_list;
-static void process_cigar(int n_cigar, const uint32_t *cigar, callback_list* callbacks, args_list* outlist) {
+static char* process_cigar(int n_cigar, const uint32_t *cigar, callback_list* callbacks, args_list* outlist) {
+    char* cigar_str = new char[2048];
+    int cx = 0;
     for (int k = 0; k < n_cigar; ++k) {
         const int cigar_op = bam_cigar_op(cigar[k]);
         const int len = bam_cigar_oplen(cigar[k]);
+        const char op_char = (char) bam_cigar_opchr(cigar[k]);
+        cx += sprintf(cigar_str+cx, "%d%s", len, &op_char); 
         int i = 0;
         //now call each callback function
         for(auto const& func : *callbacks) {
@@ -538,9 +542,10 @@ static void process_cigar(int n_cigar, const uint32_t *cigar, callback_list* cal
             i++;
         }
     }
+    return cigar_str;
 }
 
-//mostly cribed from htslib/sam.c
+//mostly cribbed from htslib/sam.c
 //calculates the mapped length of an alignment
 static void maplength(const int op, const int len, args_list* out) {
     int type = bam_cigar_type(op);
@@ -1380,11 +1385,18 @@ int main(int argc, const char** argv) {
                 }
             }
             //*******Run various cigar-related functions for 1 pass through the cigar string
-            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
+            char* cigar_str = process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
 
             //*******Extract jx co-occurrences (not all junctions though)
             if(extract_junctions) {
                 bool paired = (c->flag & BAM_FPAIRED) != 0;
+                int32_t tlen_orig = tlen;
+                int32_t mtid = c->mtid;
+                bool interchrom = 0;
+                if(tid != mtid) {
+                    tlen = mtid > tid ? 1000 : -1000;
+                    interchrom = 1;
+                }
                 //output
                 coords* cl = (coords*) junctions[1];
                 int sz = cl->size();
@@ -1392,7 +1404,7 @@ int main(int argc, const char** argv) {
                 //first create jx string for any of the normal conditions
                 if(sz >= 4 || (paired && sz >= 2)) {
                     jx_str = new char[2048];
-                    int ix = sprintf(jx_str, "%s\t%d\t%d\t", hdr->target_name[tid], refpos, (c->flag & 16) != 0);
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos, (c->flag & 16) != 0, tlen_orig, interchrom, cigar_str);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = (*cl)[jx];
                         if(jx % 2 == 0) {
@@ -1448,6 +1460,7 @@ int main(int argc, const char** argv) {
                 *((uint32_t*) junctions[0]) = 0;
                 cl->clear();
             }
+            delete(cigar_str);
         }
     }
     if(jxs_file) {
