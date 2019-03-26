@@ -1387,6 +1387,7 @@ int main(int argc, const char** argv) {
                 coords* cl = (coords*) junctions[1];
                 int sz = cl->size();
                 char* jx_str = nullptr;
+                //first create jx string for any of the normal conditions
                 if(sz >= 4 || (paired && sz >= 2)) {
                     jx_str = new char[2048];
                     int ix = sprintf(jx_str, "%s\t%d\t%d\t", hdr->target_name[tid], refpos, (c->flag & 16) != 0);
@@ -1401,6 +1402,7 @@ int main(int argc, const char** argv) {
                             ix += sprintf(jx_str+ix, "%d", coord);
                     }
                 }
+                //now determine if we're 1st/2nd/single mate
                 if(paired) {
                     //first mate
                     if(tlen > 0 && sz >= 2) {
@@ -1425,11 +1427,14 @@ int main(int argc, const char** argv) {
                                 fprintf(jxs_file, "%s", qname);
                             fprintf(jxs_file, "\t%s\n", jx_str);
                         }
+                        delete jx_str;
                     }
                 }
                 //not paired, only care if we have 2 or more introns
-                else if(sz >= 4)
+                else if(sz >= 4) {
                     fprintf(jxs_file, "%s\n", jx_str);
+                    delete jx_str;
+                }
                 //fprintf(jxs_file, "%s\t%s\t%d\t%d", qname, hdr->target_name[tid], refpos, (c->flag & 16) != 0);
                 //fprintf(jxs_file, "\n");
                 //reset for next alignment
