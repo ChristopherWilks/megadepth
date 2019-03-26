@@ -527,14 +527,15 @@ static uint64_t print_array(const char* prefix,
 typedef std::vector<void*> args_list;
 typedef void (*callback)(const int, const int, args_list*);
 typedef std::vector<callback> callback_list;
-static char* process_cigar(int n_cigar, const uint32_t *cigar, callback_list* callbacks, args_list* outlist) {
-    char* cigar_str = new char[2048];
+static void process_cigar(int n_cigar, const uint32_t *cigar, char** cigar_str, callback_list* callbacks, args_list* outlist) {
     int cx = 0;
     for (int k = 0; k < n_cigar; ++k) {
         const int cigar_op = bam_cigar_op(cigar[k]);
         const int len = bam_cigar_oplen(cigar[k]);
-        const char op_char = (char) bam_cigar_opchr(cigar[k]);
-        cx += sprintf(cigar_str+cx, "%d%s", len, &op_char); 
+        char op_char[2];
+        op_char[0] = (char) bam_cigar_opchr(cigar[k]);
+        op_char[1] = '\0';
+        cx += sprintf((*cigar_str)+cx, "%d%s", len, op_char); 
         int i = 0;
         //now call each callback function
         for(auto const& func : *callbacks) {
@@ -542,7 +543,6 @@ static char* process_cigar(int n_cigar, const uint32_t *cigar, callback_list* ca
             i++;
         }
     }
-    return cigar_str;
 }
 
 //mostly cribbed from htslib/sam.c
@@ -1185,6 +1185,7 @@ int main(int argc, const char** argv) {
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
 
+    char* cigar_str = new char[10000];
 
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
@@ -1385,18 +1386,15 @@ int main(int argc, const char** argv) {
                 }
             }
             //*******Run various cigar-related functions for 1 pass through the cigar string
-            char* cigar_str = process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &process_cigar_callbacks, &process_cigar_output_args);
+            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
 
             //*******Extract jx co-occurrences (not all junctions though)
             if(extract_junctions) {
                 bool paired = (c->flag & BAM_FPAIRED) != 0;
                 int32_t tlen_orig = tlen;
                 int32_t mtid = c->mtid;
-                bool interchrom = 0;
-                if(tid != mtid) {
+                if(tid != mtid)
                     tlen = mtid > tid ? 1000 : -1000;
-                    interchrom = 1;
-                }
                 //output
                 coords* cl = (coords*) junctions[1];
                 int sz = cl->size();
@@ -1404,13 +1402,14 @@ int main(int argc, const char** argv) {
                 //first create jx string for any of the normal conditions
                 if(sz >= 4 || (paired && sz >= 2)) {
                     jx_str = new char[2048];
-                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos, (c->flag & 16) != 0, tlen_orig, interchrom, cigar_str);
+                    //coordinates are 1-based chromosome
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
                     for(int jx = 0; jx < sz; jx++) {
-                        uint32_t coord = (*cl)[jx];
+                        uint32_t coord = refpos + (*cl)[jx];
                         if(jx % 2 == 0) {
                             if(jx >=2 )
                                 ix += sprintf(jx_str+ix, ",");
-                            ix += sprintf(jx_str+ix, "%d-", coord);
+                            ix += sprintf(jx_str+ix, "%d-", coord+1);
                         }
                         else
                             ix += sprintf(jx_str+ix, "%d", coord);
@@ -1431,8 +1430,9 @@ int main(int argc, const char** argv) {
                         if(jx_pairs.find(qname) != jx_pairs.end()) {
                             char* pre_jx_str = jx_pairs[qname];
                             mate_sz = jx_counts[qname];
-                            if(mate_sz >= 4 || sz >= 4) {
-                                fprintf(jxs_file, "%s\t%s", qname, pre_jx_str);
+                            //there must be at least 2 introns between the mates
+                            if(mate_sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
+                                fprintf(jxs_file, "%s", pre_jx_str);
                                 prev_mate_printed = true;
                             }
                             delete pre_jx_str;
@@ -1440,9 +1440,7 @@ int main(int argc, const char** argv) {
                             jx_counts.erase(qname);
                         }
                         //2nd mate with > 0 introns
-                        if(sz >= 4 || (mate_sz >= 4 && sz >= 2)) {
-                            if(!prev_mate_printed)
-                                fprintf(jxs_file, "%s", qname);
+                        if(sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
                             fprintf(jxs_file, "\t%s", jx_str);
                             prev_mate_printed = true;
                         }
@@ -1460,9 +1458,9 @@ int main(int argc, const char** argv) {
                 *((uint32_t*) junctions[0]) = 0;
                 cl->clear();
             }
-            delete(cigar_str);
         }
     }
+    delete(cigar_str);
     if(jxs_file) {
         fclose(jxs_file);
     }
