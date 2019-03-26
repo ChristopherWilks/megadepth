@@ -558,6 +558,7 @@ static const int32_t align_length(const bam1_t *rec) {
 }
 
 typedef std::unordered_map<std::string, char*> str2cstr;
+typedef std::unordered_map<std::string, int> str2int;
 typedef std::vector<uint32_t> coords;
 static void extract_junction(const int op, const int len, args_list* out) {
     uint32_t* base = (uint32_t*) (*out)[0];
@@ -1160,6 +1161,7 @@ int main(int argc, const char** argv) {
     args_list junctions;
     coords jx_coords;
     str2cstr jx_pairs;
+    str2int jx_counts;
     if(has_option(argv, argv+argc, "--junctions")) {
         junctions.push_back(&len);
         junctions.push_back(&jx_coords);
@@ -1407,26 +1409,33 @@ int main(int argc, const char** argv) {
                     //first mate
                     if(tlen > 0 && sz >= 2) {
                         jx_pairs[qname] = jx_str;
+                        jx_counts[qname] = sz;
                     }
                     //2nd mate
                     else if(tlen < 0) {
-                        bool had_prev_mate = false;
+                        bool prev_mate_printed = false;
                         //1st mate with > 0 introns
+                        int mate_sz = 0;
                         if(jx_pairs.find(qname) != jx_pairs.end()) {
                             char* pre_jx_str = jx_pairs[qname];
-                            fprintf(jxs_file, "%s\t%s", qname, pre_jx_str);
+                            mate_sz = jx_counts[qname];
+                            if(mate_sz >= 4 || sz >= 4) {
+                                fprintf(jxs_file, "%s\t%s", qname, pre_jx_str);
+                                prev_mate_printed = true;
+                            }
                             delete pre_jx_str;
                             jx_pairs.erase(qname);
-                            had_prev_mate = true;
-                            if(sz == 0)
-                                fprintf(jxs_file, "\n");
+                            jx_counts.erase(qname);
                         }
                         //2nd mate with > 0 introns
-                        if(sz >= 2) {
-                            if(!had_prev_mate)
+                        if(sz >= 4 || (mate_sz >= 4 && sz >= 2)) {
+                            if(!prev_mate_printed)
                                 fprintf(jxs_file, "%s", qname);
-                            fprintf(jxs_file, "\t%s\n", jx_str);
+                            fprintf(jxs_file, "\t%s", jx_str);
+                            prev_mate_printed = true;
                         }
+                        if(prev_mate_printed)
+                            fprintf(jxs_file,"\n");
                         delete jx_str;
                     }
                 }
@@ -1435,8 +1444,6 @@ int main(int argc, const char** argv) {
                     fprintf(jxs_file, "%s\n", jx_str);
                     delete jx_str;
                 }
-                //fprintf(jxs_file, "%s\t%s\t%d\t%d", qname, hdr->target_name[tid], refpos, (c->flag & 16) != 0);
-                //fprintf(jxs_file, "\n");
                 //reset for next alignment
                 *((uint32_t*) junctions[0]) = 0;
                 cl->clear();
