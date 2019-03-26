@@ -1441,7 +1441,9 @@ int main(int argc, const char** argv) {
                         }
                         //2nd mate with > 0 introns
                         if(sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
-                            fprintf(jxs_file, "\t%s", jx_str);
+                            if(prev_mate_printed)
+                                fprintf(jxs_file, "\t");
+                            fprintf(jxs_file, "%s", jx_str);
                             prev_mate_printed = true;
                         }
                         if(prev_mate_printed)
