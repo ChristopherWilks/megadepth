@@ -81,8 +81,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed> <prefix>\n"
     "                       Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
-    "  --keep-annot-order   Output annotation coverage in the order it appears in the BED file.\n"
-    "                       This is off by default as it takes more time & memory.\n"
+    "  --keep-bam-order     Output annotation coverage in the order chromosomes appear in the BAM file.\n"
+    "                       The default is to output annotation coverage in the order chromosomes appear in the BED file.\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -1076,7 +1076,7 @@ int main(int argc, const char** argv) {
     uint64_t unique_annotated_auc = 0;
     FILE* auc_file = nullptr;
     bool just_auc = false;
-    bool keep_order = false;
+    bool keep_order = true;
     strlist chrm_order;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
@@ -1116,7 +1116,7 @@ int main(int argc, const char** argv) {
                 std::cerr << "No argument to --annotation" << std::endl;
                 return 1;
             }
-            keep_order = has_option(argv, argv+argc, "--keep-annot-order");
+            keep_order = !has_option(argv, argv+argc, "--keep-bam-order");
             afp = fopen(afile, "r");
             err = read_annotation(afp, &annotations, &chrm_order, keep_order);
             fclose(afp);
@@ -1291,7 +1291,8 @@ int main(int argc, const char** argv) {
                                 keep_order_idx = keep_order?3:-1;
                                 sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                             }
-                            annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+                            if(!keep_order)
+                                annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
                         }
                     }
                     reset_array(coverages, chr_size);
@@ -1505,7 +1506,8 @@ int main(int argc, const char** argv) {
                     keep_order_idx = keep_order?3:-1;
                     sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                 }
-                annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+                if(!keep_order)
+                    annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
             if(keep_order) {
