@@ -81,6 +81,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed> <prefix>\n"
     "                       Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
+    "  --keep-annot-order   Output annotation coverage in the order it appears in the BED file.\n"
+    "                       This is off by default as it takes more time & memory.\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -770,8 +772,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
 }
 
 typedef std::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
+typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
-static const int process_region_line(char* line, const char* delim, annotation_map_t* amap) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t* amap, strlist* chrm_order, bool keep_order) {
 	char* line_copy = strdup(line);
 	char* tok = strtok(line_copy, delim);
 	int i = 0;
@@ -793,12 +796,19 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 		i++;
 		tok = strtok(nullptr, delim);
 	}
-    long* coords = new long(2);
+    //if we need to keep the order, then we'll store values here
+    int alen = keep_order?4:2;
+    long* coords = new long[alen];
     coords[0] = start;
     coords[1] = end;
+    if(alen >= 4) {
+        coords[2] = 0;
+        coords[3] = 0;
+    }
     if(amap->find(chrm) == amap->end()) {
         auto* v = new std::vector<long*>();
         (*amap)[chrm] = v;
+        chrm_order->push_back(chrm);
     }
     (*amap)[chrm]->push_back(coords);
 	if(line_copy)
@@ -808,14 +818,14 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     return ret;
 }
     
-static const int read_annotation(FILE* fin, annotation_map_t* amap) {
+static const int read_annotation(FILE* fin, annotation_map_t* amap, strlist* chrm_order, bool keep_order) {
 	char* line = new char[LINE_BUFFER_LENGTH];
 	size_t length = LINE_BUFFER_LENGTH;
 	assert(fin);
 	ssize_t bytes_read = getline(&line, &length, fin);
 	int err = 0;
 	while(bytes_read != -1) {
-	    err = process_region_line(strdup(line), "\t", amap);
+	    err = process_region_line(strdup(line), "\t", amap, chrm_order, keep_order);
         assert(err==0);
 		bytes_read = getline(&line, &length, fin);
     }
@@ -823,7 +833,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -834,17 +844,20 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
             sum += coverages[j];
         }
         (*annotated_auc) = (*annotated_auc) + sum;
-        if(!just_auc)
-            fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+        if(!just_auc) {
+            if(keep_order_idx == -1)
+                fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+            else
+                (*annotations)[z][keep_order_idx] = sum;
+        }
     }
 }
 
 static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp) {
     for(auto const& kv : *annotations) {
         if(annotations_seen->find(kv.first) == annotations_seen->end()) {
-            long z;
             std::vector<long*>* annotations_for_chr = kv.second;
-            for(z = 0; z < annotations_for_chr->size(); z++) {
+            for(long z = 0; z < annotations_for_chr->size(); z++) {
                 long start = (*annotations_for_chr)[z][0];
                 long end = (*annotations_for_chr)[z][1];
                 fprintf(ofp, "%s\t%lu\t%lu\t0\n", kv.first.c_str(), start, end);
@@ -1063,6 +1076,8 @@ int main(int argc, const char** argv) {
     uint64_t unique_annotated_auc = 0;
     FILE* auc_file = nullptr;
     bool just_auc = false;
+    bool keep_order = false;
+    strlist chrm_order;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
         just_auc = !has_option(argv, argv+argc, "--coverage");
@@ -1101,8 +1116,9 @@ int main(int argc, const char** argv) {
                 std::cerr << "No argument to --annotation" << std::endl;
                 return 1;
             }
+            keep_order = has_option(argv, argv+argc, "--keep-annot-order");
             afp = fopen(afile, "r");
-            err = read_annotation(afp, &annotations);
+            err = read_annotation(afp, &annotations, &chrm_order, keep_order);
             fclose(afp);
             afp = nullptr;
             if(!just_auc) {
@@ -1119,6 +1135,8 @@ int main(int argc, const char** argv) {
         }
         assert(err == 0);
     }
+    fraglen2count* frag_dist = new fraglen2count(1);
+    mate2len* frag_mates = new mate2len(1);
     char prefix[50]="";
     int32_t ptid = -1;
     uint32_t* starts = nullptr;
@@ -1140,8 +1158,6 @@ int main(int argc, const char** argv) {
         ends = new uint32_t[chr_size];
     }
     bool print_frag_dist = false;
-    fraglen2count frag_dist;
-    mate2len frag_mates;
     FILE* fragdist_file = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
         const char *prefix = *get_option(argv, argv+argc, "--frag-dist");
@@ -1268,11 +1284,14 @@ int main(int argc, const char** argv) {
                             unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
+                        int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
-                            if(unique)
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
-                            annotation_chrs_seen[hdr->target_name[ptid]] = true;
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                            if(unique) {
+                                keep_order_idx = keep_order?3:-1;
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                            }
+                            annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
                         }
                     }
                     reset_array(coverages, chr_size);
@@ -1297,24 +1316,24 @@ int main(int argc, const char** argv) {
                         (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
                         ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
                     //are we the later mate? if so we calculate the frag length
-                    if(frag_mates.find(qname) != frag_mates.end()) {
-                        uint64_t both_lens = frag_mates[qname];
+                    if(frag_mates->find(qname) != frag_mates->end()) {
+                        uint64_t both_lens = (*frag_mates)[qname];
                         int32_t both_intron_lengths = total_intron_len + (both_lens & frag_lens_mask);
                         both_lens = both_lens >> FRAG_LEN_BITLEN;
                         int32_t mreflen = (both_lens & frag_lens_mask);
-                        frag_mates.erase(qname);
+                        frag_mates->erase(qname);
                         if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
                                 (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
                             if(both_intron_lengths > abs(rec->core.isize))
                                 both_intron_lengths = 0;
-                            frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
+                            (*frag_dist)[abs(rec->core.isize)-both_intron_lengths]++;
                         }
                     }
                     else {
                         uint64_t both_lens = end_refpos - refpos;
                         both_lens = both_lens << FRAG_LEN_BITLEN;
                         both_lens |= total_intron_len;
-                        frag_mates[qname] = both_lens;
+                        (*frag_mates)[qname] = both_lens;
                     }
                 }
             }
@@ -1468,7 +1487,7 @@ int main(int argc, const char** argv) {
     }
     if(print_frag_dist) {
         if(ptid != -1)
-            print_frag_distribution(&frag_dist, fragdist_file);
+            print_frag_distribution(frag_dist, fragdist_file);
         fclose(fragdist_file);
     }
     if(compute_coverage) {
@@ -1480,10 +1499,31 @@ int main(int argc, const char** argv) {
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
             }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
-                if(unique)
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
-                annotation_chrs_seen[hdr->target_name[ptid]] = true;
+                int keep_order_idx = keep_order?2:-1;
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                if(unique) {
+                    keep_order_idx = keep_order?3:-1;
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                }
+                annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+            }
+            //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+            if(keep_order) {
+                for(auto const c : chrm_order) {
+                    if(!c)
+                        continue;
+                    std::vector<long*>* annotations_for_chr = annotations[c];
+                    for(long z = 0; z < annotations_for_chr->size(); z++) {
+                        long start = (*annotations_for_chr)[z][0];
+                        long end = (*annotations_for_chr)[z][1];
+                        long sum = (*annotations_for_chr)[z][2];
+                        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+                        if(unique) {
+                            sum = (*annotations_for_chr)[z][3];
+                            fprintf(uafp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+                        }
+                    }
+                }
             }
         }
         if(sum_annotation && auc_file) {
@@ -1494,7 +1534,7 @@ int main(int argc, const char** argv) {
         delete[] coverages;
         if(unique)
             delete[] unique_coverages;
-        if(sum_annotation) {
+        if(sum_annotation && !keep_order) {
             output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(unique)
                 output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
