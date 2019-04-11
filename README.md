@@ -60,8 +60,11 @@ In addition to producing coverage output for all reads, will also produce covera
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
 
-The annotation BED file should be sorted by chromosome (at least), as coverage is calculated once per chromosome.
-However, coordinate sorting is not necessary (though it doesn't hurt).
+The annotation BED file does not need to be sorted in any particular way.
+
+Bamcount will output the summed coverages for the annotation in contiguous blocks per chromosome.
+
+This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
  
 ### `bamcount --coverage --double-count`
 
