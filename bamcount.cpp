@@ -472,6 +472,15 @@ static uint64_t print_array(const char* prefix,
     char buf[OUT_BUFF_SZ];
     int buf_written = 0;
     char* bufptr = buf;
+    //TODO: speed this up, maybe keep a separate vector
+    //which tracks where the runs of the same value stop
+    //then only loop through that one w/o the if's
+    //
+    //OR
+    //
+    //create modules (functions/classes) which determine
+    //the type of output ahead of time to get rid of the if's
+    //
     //this will print the coordinates in base-0
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
