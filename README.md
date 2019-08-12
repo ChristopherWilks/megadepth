@@ -60,8 +60,11 @@ In addition to producing coverage output for all reads, will also produce covera
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
 
-The annotation BED file should be sorted by chromosome (at least), as coverage is calculated once per chromosome.
-However, coordinate sorting is not necessary (though it doesn't hurt).
+The annotation BED file does not need to be sorted in any particular way.
+
+Bamcount will output the summed coverages for the annotation in contiguous blocks per chromosome.
+
+This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
  
 ### `bamcount --coverage --double-count`
 
@@ -155,7 +158,7 @@ No other sofclipped bases are reported.
 
 Output is comma separated with 7 fields:
 
-| Pos   |                                                                      Descrtiption|
+| Pos   |                                                                      Description|
 |-------|----------------------------------------------------------------------------------|
 | 1     | Reference record ID                                                              |
 | 2     | POS field (0-based ref offset of either leftmost or rightmost aligned base)      |
@@ -165,3 +168,42 @@ Output is comma separated with 7 fields:
 | 6     | Base (A/T)                                                                       |
 | 7     | Count of the base in column 6                                                    |
 
+### `bamcount --junctions <output_file_prefix>`
+
+Extract locally co-occurring junctions from BAM.
+
+This does not extract all potential junctions, only those for which a read (or read pair) had >= 2 junctions.
+
+In a paired context, there must be at least 2 junctions across the 2 read mates to be output.
+
+Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate if applicable):
+
+| Pos    |                                                                            Description|
+|--------|---------------------------------------------------------------------------------------|
+| 1      | Reference record ID                                                                   |
+| 2      | POS field (1-based ref offset of either leftmost base)                                |
+| 3      | Mapping strand (0 forward, 1 reverse)                                                 |
+| 4      | Insert length (0 if not paired)                                                       |
+| 5      | Cigar string (useful for determining anchor lengths)                                  |
+| 6      | List of junction coordinates (comma-delimited)                                        |
+| 7*     | Mate reference record ID                                                              |
+| 8*     | Mate POS field (1-based ref offset of either leftmost base)                           |
+| 9*     | Mate mapping strand (0 forward, 1 reverse)                                            |
+| 10*    | Mate insert length (0 if not paired)                                                  |
+| 11*    | Mate cigar string (useful for determining anchor lengths)                             |
+| 12*    | Mate list of junction coordinates (comma-delimited)                                   |
+
+\*optional, output if a 2nd mate is present and has the required number of junctions.
+
+### `bamcount --bam2fastq <output_file_prefix>`
+
+Entirely separate mode from the other subcommands, this takes a BAM and outputs one or more FASTQ files (uncompressed).
+
+Additional options:
+
+ * `--filter-out <int>` same as `samtools -F <int>`, skips alignments with that bitflag set
+ * `--filter-in <int>`  same as `samtools -f <int>`, only includes alignments with that bitflag set 
+ * `--re-reverse` same as `Picard SamToFastq -RE_REVERSE` will reverse complement sequences which were aligned to the reverse strand
+ * `--one-file` force output to one FASTQ file, even if paired
+ 
+ If `--one-file` is not set, `bamcount` will attempt to output all paired sequences to 2 separate FASTQ files and any non-paired sequences to a 3rd file.

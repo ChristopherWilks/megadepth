@@ -45,6 +45,18 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --version            Show version.\n"
     "  --threads            # of threads to do BAM decompression\n"
     "\n"
+    "Extract basic junction information from the BAM, including co-occurrence\n"
+    "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
+    "                       Writes to a TSV file <prefix>.jxs.tsv\n"
+    "\n"
+    "Extract reads from BAM into FASTQ (exclusive of all other modes):\n"
+    "  --bam2fastq <prefix> Extract all reads from the passed in BAM and output as FASTQs\n"
+    "                       Uses prefix to name the fastq(s)\n"
+    "  --filter-out         SAM bit flags to filter out\n"
+    "  --filter-in          SAM bit flags to filter in\n"
+    "  --re-reverse         If read is reversed in alignment, re-reverse it in output\n"
+    "  --one-file           If you know file is not paired or just want all reads in one file\n"
+    "\n"
     "Non-reference summaries:\n"
     "  --alts <prefix>              Print differing from ref per-base coverages\n"
     "                               Writes to a CSV file <prefix>.alts.tsv\n"
@@ -69,6 +81,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed> <prefix>\n"
     "                       Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
+    "  --keep-bam-order     Output annotation coverage in the order chromosomes appear in the BAM file.\n"
+    "                       The default is to output annotation coverage in the order chromosomes appear in the BED file.\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -148,7 +162,18 @@ static inline int polya_check(const uint8_t *str, size_t off, size_t run, char *
     return count;
 }
 
-static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
+//const char seq_nt16_str[] = "=ACMGRSVTWYHKDBN";
+static const char seq_rev_nt16_str[] = "=TGMCRSVAWYHKDBN";
+static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run, bool reverse=false) {
+    if(reverse) {
+        int i=(off+run)-1;
+        while(((int) off) <= i) {
+            int io = bam_seqi(str, i);
+            os << seq_rev_nt16_str[io];
+            i--;
+        }
+        return os;
+    }
     for(size_t i = off; i < off + run; i++) {
         os << seq_nt16_str[bam_seqi(str, i)];
     }
@@ -165,6 +190,21 @@ static inline std::ostream& kstring_out(std::ostream& os, const kstring_t *str) 
 static inline std::ostream& cstr_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run) {
     for(size_t i = off; i < off + run; i++) {
         os << (char)str[i];
+    }
+    return os;
+}
+
+static inline std::ostream& qstr_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run, bool reverse=false) {
+    if(reverse) {
+        int i=(off+run)-1;
+        while(((int) off) <= i) {
+            os << (char)(str[i]+33);
+            i--;
+        }
+        return os;
+    }   
+    for(size_t i = off; i < off + run; i++) {
+        os << (char)(str[i]+33);
     }
     return os;
 }
@@ -432,6 +472,15 @@ static uint64_t print_array(const char* prefix,
     char buf[OUT_BUFF_SZ];
     int buf_written = 0;
     char* bufptr = buf;
+    //TODO: speed this up, maybe keep a separate vector
+    //which tracks where the runs of the same value stop
+    //then only loop through that one w/o the if's
+    //
+    //OR
+    //
+    //create modules (functions/classes) which determine
+    //the type of output ahead of time to get rid of the if's
+    //
     //this will print the coordinates in base-0
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
@@ -484,24 +533,64 @@ static uint64_t print_array(const char* prefix,
     return auc;
 }
 
-//mostly cribed from htslib/sam.c
-//calculates the mapped length of an alignment
-static const uint32_t bam_cigar2maplen(int n_cigar, const uint32_t *cigar)
-{
-    int k;
-    uint32_t mlen = 0;
-    for (k = 0; k < n_cigar; ++k) {
-        int type = bam_cigar_type(bam_cigar_op(cigar[k]));
-        int len = bam_cigar_oplen(cigar[k]);
-        if ((type & 1) && (type & 2)) mlen += len;
+//generic function to loop through cigar
+//and for each operation/lenth, call a list of functions to process
+typedef std::vector<void*> args_list;
+typedef void (*callback)(const int, const int, args_list*);
+typedef std::vector<callback> callback_list;
+static void process_cigar(int n_cigar, const uint32_t *cigar, char** cigar_str, callback_list* callbacks, args_list* outlist) {
+    int cx = 0;
+    for (int k = 0; k < n_cigar; ++k) {
+        const int cigar_op = bam_cigar_op(cigar[k]);
+        const int len = bam_cigar_oplen(cigar[k]);
+        char op_char[2];
+        op_char[0] = (char) bam_cigar_opchr(cigar[k]);
+        op_char[1] = '\0';
+        cx += sprintf((*cigar_str)+cx, "%d%s", len, op_char); 
+        int i = 0;
+        //now call each callback function
+        for(auto const& func : *callbacks) {
+            (*func)(cigar_op, len, (args_list*) (*outlist)[i]);
+            i++;
+        }
     }
-    return mlen;
+}
+
+//mostly cribbed from htslib/sam.c
+//calculates the mapped length of an alignment
+static void maplength(const int op, const int len, args_list* out) {
+    int type = bam_cigar_type(op);
+    if ((type & 1) && (type & 2)) *((uint32_t*) (*out)[0]) += len;
+}
+
+static void end_genomic_coord(const int op, const int len, args_list* out) {
+    int type = bam_cigar_type(op);
+    if (type & 2) *((uint32_t*) (*out)[0]) += len;
 }
 
 static const int32_t align_length(const bam1_t *rec) {
     //bam_endpos processes the whole cigar string
     return bam_endpos(rec) - rec->core.pos;
 }
+
+typedef std::unordered_map<std::string, char*> str2cstr;
+typedef std::unordered_map<std::string, int> str2int;
+typedef std::vector<uint32_t> coords;
+static void extract_junction(const int op, const int len, args_list* out) {
+    uint32_t* base = (uint32_t*) (*out)[0];
+    //not an intron
+    if(op != BAM_CREF_SKIP) {
+        //but track the length if consuming the ref
+        if(bam_cigar_type(op) & 2)
+            (*base) += len;
+        return;
+    }
+    coords* jxs = (coords*) (*out)[1];
+    jxs->push_back(*base);
+    (*base) += len;
+    jxs->push_back(*base);
+}
+
 
 typedef std::unordered_map<std::string, uint32_t*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
@@ -692,8 +781,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
 }
 
 typedef std::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
+typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
-static const int process_region_line(char* line, const char* delim, annotation_map_t* amap) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t* amap, strlist* chrm_order, bool keep_order) {
 	char* line_copy = strdup(line);
 	char* tok = strtok(line_copy, delim);
 	int i = 0;
@@ -715,12 +805,19 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 		i++;
 		tok = strtok(nullptr, delim);
 	}
-    long* coords = new long(2);
+    //if we need to keep the order, then we'll store values here
+    int alen = keep_order?4:2;
+    long* coords = new long[alen];
     coords[0] = start;
     coords[1] = end;
+    if(alen >= 4) {
+        coords[2] = 0;
+        coords[3] = 0;
+    }
     if(amap->find(chrm) == amap->end()) {
         auto* v = new std::vector<long*>();
         (*amap)[chrm] = v;
+        chrm_order->push_back(chrm);
     }
     (*amap)[chrm]->push_back(coords);
 	if(line_copy)
@@ -730,14 +827,14 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     return ret;
 }
     
-static const int read_annotation(FILE* fin, annotation_map_t* amap) {
+static const int read_annotation(FILE* fin, annotation_map_t* amap, strlist* chrm_order, bool keep_order) {
 	char* line = new char[LINE_BUFFER_LENGTH];
 	size_t length = LINE_BUFFER_LENGTH;
 	assert(fin);
 	ssize_t bytes_read = getline(&line, &length, fin);
 	int err = 0;
 	while(bytes_read != -1) {
-	    err = process_region_line(strdup(line), "\t", amap);
+	    err = process_region_line(strdup(line), "\t", amap, chrm_order, keep_order);
         assert(err==0);
 		bytes_read = getline(&line, &length, fin);
     }
@@ -745,8 +842,7 @@ static const int read_annotation(FILE* fin, annotation_map_t* amap) {
     return err;
 }
 
-static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
-//static void sum_annotations<T>(const T* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<long*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
     long z, j;
     for(z = 0; z < annotations->size(); z++) {
         long sum = 0;
@@ -757,18 +853,20 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<long*>*
             sum += (uint32_t) coverages[j];
         }
         (*annotated_auc) = (*annotated_auc) + sum;
-        if(!just_auc)
-            //fprintf(ofp, "%s\t%lu\t%lu\t%.0f\n", chrm, start, end, sum);
-            fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+        if(!just_auc) {
+            if(keep_order_idx == -1)
+                fprintf(ofp, "%s\t%lu\t%lu\t%lu\n", chrm, start, end, sum);
+            else
+                (*annotations)[z][keep_order_idx] = sum;
+        }
     }
 }
 
 static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp) {
     for(auto const& kv : *annotations) {
         if(annotations_seen->find(kv.first) == annotations_seen->end()) {
-            long z;
             std::vector<long*>* annotations_for_chr = kv.second;
-            for(z = 0; z < annotations_for_chr->size(); z++) {
+            for(long z = 0; z < annotations_for_chr->size(); z++) {
                 long start = (*annotations_for_chr)[z][0];
                 long end = (*annotations_for_chr)[z][1];
                 fprintf(ofp, "%s\t%lu\t%lu\t0\n", kv.first.c_str(), start, end);
@@ -828,6 +926,17 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
     fprintf(outfn, "STAT\tMODE_LENGTH_COUNT\t%lu\n", mode_count);
     fprintf(outfn, "STAT\tKALLISTO_COUNT\t%lu\n", kcount);
     fprintf(outfn, "STAT\tKALLISTO_MEAN_LENGTH\t%.3f\n", kmean);
+}
+            
+void output_read_sequence_and_qualities(char* qname, int midx, uint8_t* seq, uint8_t* qual, size_t l_qseq, bool reversed, std::ostream* outfh, bool one_file) {
+    (*outfh) << "@" << qname;
+    if(!one_file)            
+        (*outfh) << "/" << midx;
+    (*outfh) << "\n";
+    seq_substring(*outfh, seq, 0, l_qseq, reversed);
+    (*outfh) << "\n+\n";
+    qstr_substring(*outfh, qual, 0, l_qseq, reversed);
+    (*outfh) << "\n";
 }
 
 
@@ -906,6 +1015,7 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
 }
 
 typedef std::unordered_map<std::string, uint64_t> mate2len;
+typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 int main(int argc, const char** argv) {
@@ -1020,7 +1130,53 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
+    
+    //setup list of callbacks for the process_cigar()
+    //this is so we only have to walk the cigar for each alignment ~1 time
+    callback_list process_cigar_callbacks;
+    args_list process_cigar_output_args;
+
+    int filter_out = -1;
+    int filter_in = -1;
+    std::fstream fq0_file;
+    std::fstream fq1_file;
+    std::fstream fq2_file;
+    bool bam2fastq = false;
+    bool one_file = false;
+    bool re_reversed = false;
+    str2str read_mate;
+    if(has_option(argv, argv+argc, "--bam2fastq")) {
+        bam2fastq = true;
+        re_reversed = has_option(argv, argv+argc, "--re-reverse");
+        one_file = has_option(argv, argv+argc, "--one-file");
+        const char *prefix = *get_option(argv, argv+argc, "--bam2fastq");
+        char afn[1024];
+        if(!one_file) {
+            sprintf(afn, "%s_1.fastq", prefix);
+            fq1_file.open(afn, std::fstream::out);
+            sprintf(afn, "%s_2.fastq", prefix);
+            fq2_file.open(afn, std::fstream::out);
+        }
+        sprintf(afn, "%s.fastq", prefix);
+        fq0_file.open(afn, std::fstream::out);
+        if(has_option(argv, argv+argc, "--filter-out")) {
+            const char** filter_out_ = get_option(argv, argv+argc, "--filter-out");
+            filter_out = atoi(*filter_out_);
+        }
+        if(has_option(argv, argv+argc, "--filter-in")) {
+            const char** filter_in_ = get_option(argv, argv+argc, "--filter-in");
+            filter_in = atoi(*filter_in_);
+        }
+    }
+
+    args_list maplen_outlist;
+    uint64_t total_number_bases_processed = 0;
+    maplen_outlist.push_back(&total_number_bases_processed);
     bool count_bases = has_option(argv, argv+argc, "--num-bases");
+    if(count_bases) {
+        process_cigar_callbacks.push_back(maplength);
+        process_cigar_output_args.push_back(&maplen_outlist);
+    }
 
     bool print_qual = has_option(argv, argv+argc, "--print-qual");
     bool include_sc = false;
@@ -1065,6 +1221,14 @@ int main(int argc, const char** argv) {
     read2len overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
+    annotation_map_t annotations; 
+    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    uint64_t annotated_auc = 0;
+    uint64_t unique_annotated_auc = 0;
+    FILE* auc_file = nullptr;
+    bool just_auc = false;
+    bool keep_order = true;
+    strlist chrm_order;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -1081,11 +1245,41 @@ int main(int argc, const char** argv) {
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
-        if(ubwfp && afp) {
-            sprintf(afn, "%s.unique.tsv", annot_prefix);
-            uafp = fopen(afn, "w");
+        //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
+        //maps chromosome to vector of uint arrays storing start/end of annotated intervals
+        int err = 0;
+        if(has_option(argv, argv+argc, "--annotation")) {
+            sum_annotation = true;
+            const char* afile = *(get_option(argv, argv+argc, "--annotation"));
+            if(!afile) {
+                std::cerr << "No argument to --annotation" << std::endl;
+                return 1;
+            }
+            const char* prefix = *(get_option(argv, argv+argc, "--annotation", 1));
+            if(!prefix) {
+                std::cerr << "No argument to --annotation" << std::endl;
+                return 1;
+            }
+            keep_order = !has_option(argv, argv+argc, "--keep-bam-order");
+            afp = fopen(afile, "r");
+            err = read_annotation(afp, &annotations, &chrm_order, keep_order);
+            fclose(afp);
+            afp = nullptr;
+            if(!just_auc) {
+                char afn[1024];
+                sprintf(afn, "%s.all.tsv", prefix);
+                afp = fopen(afn, "w");
+                if(ubwfp) {
+                    sprintf(afn, "%s.unique.tsv", prefix);
+                    uafp = fopen(afn, "w");
+                }
+            }
+            assert(!annotations.empty());
+            std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
         }
     }
+    fraglen2count* frag_dist = new fraglen2count(1);
+    mate2len* frag_mates = new mate2len(1);
     char prefix[50]="";
     int32_t ptid = -1;
     uint32_t* starts = nullptr;
@@ -1107,8 +1301,6 @@ int main(int argc, const char** argv) {
         ends = new uint32_t[chr_size];
     }
     bool print_frag_dist = false;
-    fraglen2count frag_dist;
-    mate2len frag_mates;
     FILE* fragdist_file = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
         const char *prefix = *get_option(argv, argv+argc, "--frag-dist");
@@ -1127,16 +1319,81 @@ int main(int argc, const char** argv) {
         alts_file.open(afn, std::fstream::out);
         compute_alts = true;
     }
+    FILE* jxs_file = nullptr;
+    bool extract_junctions = false;
+    uint32_t len = 0;
+    args_list junctions;
+    coords jx_coords;
+    str2cstr jx_pairs;
+    str2int jx_counts;
+    if(has_option(argv, argv+argc, "--junctions")) {
+        junctions.push_back(&len);
+        junctions.push_back(&jx_coords);
+        const char *prefix = *get_option(argv, argv+argc, "--junctions");
+        char afn[1024];
+        sprintf(afn, "%s.jxs.tsv", prefix);
+        jxs_file = fopen(afn, "w");
+        extract_junctions = true;
+        process_cigar_callbacks.push_back(extract_junction);
+        process_cigar_output_args.push_back(&junctions);
+    }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     //calculates AUC automatically
     uint64_t unique_auc = 0;
     uint64_t unique_annotated_auc = 0;
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
-    uint64_t total_number_bases_processed = 0;
+
+    char* cigar_str = new char[10000];
+
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
+        //read name
+        char* qname = bam_get_qname(rec);
+        //*******bam2fastq
+        if(bam2fastq) {
+            if(filter_in > -1 && (c->flag & filter_in) != filter_in)
+                continue;
+            if(filter_out > -1 && (c->flag & filter_out) == filter_out)
+                continue;
+            bool reversed = re_reversed && (c->flag & 16) != 0;
+            bool multi_segment = (c->flag & 1) != 0;
+            uint8_t *seq = bam_get_seq(rec);
+            uint8_t *qual = bam_get_qual(rec);
+            auto iter = read_mate.find(qname);
+            //found a mate, print out both
+            if(!one_file && multi_segment && iter != read_mate.end()) {
+                bool last_segment = (c->flag & 128) != 0;
+                uint8_t* seq_qual = iter->second;
+                const char* mate_qname = iter->first.c_str();
+                std::ostream* outfh = last_segment ? &fq1_file : &fq2_file;
+                int midx = last_segment ? 1 : 2;
+                int seq_len = strlen((char*) (seq_qual+1));
+                bool mate_reversed = seq_qual[0];
+                output_read_sequence_and_qualities(qname, midx, seq_qual+1, (seq_qual+seq_len)+2, seq_len, mate_reversed, outfh, one_file);
+                delete read_mate[qname];
+                read_mate.erase(qname);
+
+                midx = last_segment ? 2 : 1;
+                outfh = last_segment ? &fq2_file : &fq1_file;
+                output_read_sequence_and_qualities(qname, midx, seq, qual, c->l_qseq, reversed, outfh, one_file);
+            }
+            else if(!one_file && multi_segment) {
+                uint8_t* seq_qual = new uint8_t[(2*c->l_qseq)+3];
+                seq_qual[0]=reversed;
+                memcpy(seq_qual+1, seq, c->l_qseq);
+                seq_qual[c->l_qseq+1]='\0';
+                memcpy(seq_qual+c->l_qseq+2, qual, c->l_qseq);
+                seq_qual[(2*c->l_qseq)+3]='\0';
+                read_mate[qname] = seq_qual;
+            }
+            else
+                output_read_sequence_and_qualities(qname, 1, seq, qual, c->l_qseq, reversed, &fq0_file, one_file);
+            
+            continue;
+        }
+        //*******Main Quantification Conditional (for ref & alt coverage, frag dist)
         //filter OUT unmapped and secondary alignments
         if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
             reads_processed++;
@@ -1148,21 +1405,17 @@ int main(int argc, const char** argv) {
             int32_t end_refpos = -1;
             //base-0 mate start coordinate
             int32_t mrefpos = rec->core.mpos;
-            //read name
-            char* qname = bam_get_qname(rec);
             //used for adjusting the fragment lengths
             int32_t total_intron_len = 0;
             //ref chrm/contig ID
             int32_t tid = rec->core.tid;
-            
-            //mainly for debuging purposes 
-            if(count_bases)
-                total_number_bases_processed += bam_cigar2maplen(rec->core.n_cigar, bam_get_cigar(rec));
+            int32_t tlen = rec->core.isize;
 
+            
             if(softclip_file)
                 total_number_sequence_bases_processed += c->l_qseq;
 
-            //track coverage
+            //*******Reference coverage tracking
             if(compute_coverage) {
                 if(tid != ptid) {
                     if(ptid != -1) {
@@ -1174,11 +1427,15 @@ int main(int argc, const char** argv) {
                             unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
+                        int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
-                            if(unique)
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
-                            annotation_chrs_seen[hdr->target_name[ptid]] = true;
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                            if(unique) {
+                                keep_order_idx = keep_order?3:-1;
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                            }
+                            if(!keep_order)
+                                annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
                         }
                     }
                     reset_array(coverages, chr_size);
@@ -1195,7 +1452,7 @@ int main(int argc, const char** argv) {
             if(report_end_coord)
                 fprintf(stdout, "%s\t%d\n", qname, end_refpos);
 
-            //track fragment lengths per chromosome
+            //*******Fragment length distribution (per chromosome)
             if(print_frag_dist) {
                 //csaw's getPESizes criteria
                 //first, don't count read that's got problems
@@ -1203,28 +1460,29 @@ int main(int argc, const char** argv) {
                         (c->flag & BAM_FPAIRED) != 0 && (c->flag & BAM_FMUNMAP) == 0 &&
                         ((c->flag & BAM_FREAD1) != 0) != ((c->flag & BAM_FREAD2) != 0) && rec->core.tid == rec->core.mtid) {
                     //are we the later mate? if so we calculate the frag length
-                    if(frag_mates.find(qname) != frag_mates.end()) {
-                        uint64_t both_lens = frag_mates[qname];
+                    if(frag_mates->find(qname) != frag_mates->end()) {
+                        uint64_t both_lens = (*frag_mates)[qname];
                         int32_t both_intron_lengths = total_intron_len + (both_lens & frag_lens_mask);
                         both_lens = both_lens >> FRAG_LEN_BITLEN;
                         int32_t mreflen = (both_lens & frag_lens_mask);
-                        frag_mates.erase(qname);
+                        frag_mates->erase(qname);
                         if(((c->flag & BAM_FREVERSE) != 0) != ((c->flag & BAM_FMREVERSE) != 0) &&
                                 (((c->flag & BAM_FREVERSE) == 0 && refpos < mrefpos + mreflen) || ((c->flag & BAM_FMREVERSE) == 0 && mrefpos < end_refpos))) {
                             if(both_intron_lengths > abs(rec->core.isize))
                                 both_intron_lengths = 0;
-                            frag_dist[abs(rec->core.isize)-both_intron_lengths]++;
+                            (*frag_dist)[abs(rec->core.isize)-both_intron_lengths]++;
                         }
                     }
                     else {
                         uint64_t both_lens = end_refpos - refpos;
                         both_lens = both_lens << FRAG_LEN_BITLEN;
                         both_lens |= total_intron_len;
-                        frag_mates[qname] = both_lens;
+                        (*frag_mates)[qname] = both_lens;
                     }
                 }
             }
 
+            //*******Start/end positions (for TSS,TES)
             //track read starts/ends
             //if minimum quality is set, then we only track starts/ends for alignments that pass
             if(compute_ends) {
@@ -1261,6 +1519,7 @@ int main(int argc, const char** argv) {
                 kstring_out(std::cout, &sambuf);
                 std::cout << '\n';
             }
+            //*******Alternate base coverages, soft clipping output
             //track alt. base coverages
             if(compute_alts) {
                 if(first) {
@@ -1289,11 +1548,90 @@ int main(int argc, const char** argv) {
                             print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
             }
+            //*******Run various cigar-related functions for 1 pass through the cigar string
+            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
+
+            //*******Extract jx co-occurrences (not all junctions though)
+            if(extract_junctions) {
+                bool paired = (c->flag & BAM_FPAIRED) != 0;
+                int32_t tlen_orig = tlen;
+                int32_t mtid = c->mtid;
+                if(tid != mtid)
+                    tlen = mtid > tid ? 1000 : -1000;
+                //output
+                coords* cl = (coords*) junctions[1];
+                int sz = cl->size();
+                char* jx_str = nullptr;
+                //first create jx string for any of the normal conditions
+                if(sz >= 4 || (paired && sz >= 2)) {
+                    jx_str = new char[2048];
+                    //coordinates are 1-based chromosome
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    for(int jx = 0; jx < sz; jx++) {
+                        uint32_t coord = refpos + (*cl)[jx];
+                        if(jx % 2 == 0) {
+                            if(jx >=2 )
+                                ix += sprintf(jx_str+ix, ",");
+                            ix += sprintf(jx_str+ix, "%d-", coord+1);
+                        }
+                        else
+                            ix += sprintf(jx_str+ix, "%d", coord);
+                    }
+                }
+                //now determine if we're 1st/2nd/single mate
+                if(paired) {
+                    //first mate
+                    if(tlen > 0 && sz >= 2) {
+                        jx_pairs[qname] = jx_str;
+                        jx_counts[qname] = sz;
+                    }
+                    //2nd mate
+                    else if(tlen < 0) {
+                        bool prev_mate_printed = false;
+                        //1st mate with > 0 introns
+                        int mate_sz = 0;
+                        if(jx_pairs.find(qname) != jx_pairs.end()) {
+                            char* pre_jx_str = jx_pairs[qname];
+                            mate_sz = jx_counts[qname];
+                            //there must be at least 2 introns between the mates
+                            if(mate_sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
+                                fprintf(jxs_file, "%s", pre_jx_str);
+                                prev_mate_printed = true;
+                            }
+                            delete pre_jx_str;
+                            jx_pairs.erase(qname);
+                            jx_counts.erase(qname);
+                        }
+                        //2nd mate with > 0 introns
+                        if(sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
+                            if(prev_mate_printed)
+                                fprintf(jxs_file, "\t");
+                            fprintf(jxs_file, "%s", jx_str);
+                            prev_mate_printed = true;
+                        }
+                        if(prev_mate_printed)
+                            fprintf(jxs_file,"\n");
+                        delete jx_str;
+                    }
+                }
+                //not paired, only care if we have 2 or more introns
+                else if(sz >= 4) {
+                    fprintf(jxs_file, "%s\n", jx_str);
+                    delete jx_str;
+                }
+                //reset for next alignment
+                *((uint32_t*) junctions[0]) = 0;
+                cl->clear();
+            }
         }
+    }
+    delete(cigar_str);
+    if(jxs_file) {
+        fclose(jxs_file);
     }
     if(print_frag_dist) {
         if(ptid != -1)
-            print_frag_distribution(&frag_dist, fragdist_file);
+            print_frag_distribution(frag_dist, fragdist_file);
         fclose(fragdist_file);
     }
     if(compute_coverage) {
@@ -1305,10 +1643,32 @@ int main(int argc, const char** argv) {
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
             }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc);
-                if(unique)
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc);
-                annotation_chrs_seen[hdr->target_name[ptid]] = true;
+                int keep_order_idx = keep_order?2:-1;
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                if(unique) {
+                    keep_order_idx = keep_order?3:-1;
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                }
+                if(!keep_order)
+                    annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+            }
+            //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+            if(keep_order) {
+                for(auto const c : chrm_order) {
+                    if(!c)
+                        continue;
+                    std::vector<long*>* annotations_for_chr = annotations[c];
+                    for(long z = 0; z < annotations_for_chr->size(); z++) {
+                        long start = (*annotations_for_chr)[z][0];
+                        long end = (*annotations_for_chr)[z][1];
+                        long sum = (*annotations_for_chr)[z][2];
+                        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+                        if(unique) {
+                            sum = (*annotations_for_chr)[z][3];
+                            fprintf(uafp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+                        }
+                    }
+                }
             }
         }
         if(sum_annotation && auc_file) {
@@ -1319,7 +1679,7 @@ int main(int argc, const char** argv) {
         delete[] coverages;
         if(unique)
             delete[] unique_coverages;
-        if(sum_annotation) {
+        if(sum_annotation && !keep_order) {
             output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(unique)
                 output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
@@ -1363,10 +1723,18 @@ int main(int argc, const char** argv) {
         fclose(afp);
     if(uafp)
         fclose(uafp);
+    if(bam2fastq) {
+        fq0_file.close();
+        if(!one_file) {
+            fq1_file.close();
+            fq2_file.close();
+        }
+    }
     fprintf(stdout,"Read %lu records\n",recs);
     if(count_bases) {
         fprintf(stdout,"%lu records passed filters\n",reads_processed);
-        fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
+        fprintf(stdout,"%lu bases in alignments which passed filters\n",*((uint64_t*) maplen_outlist[0]));
+        //fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
     }
     if(softclip_file) {
         fprintf(softclip_file,"%lu bases softclipped\n",total_softclip_count);
