@@ -927,7 +927,7 @@ int main(int argc, const char** argv) {
     bool just_auc = false;
     char afn[1024];
     if(has_option(argv, argv+argc, "--auc")) {
-        just_auc = !has_option(argv, argv+argc, "--coverage");
+        just_auc = !has_option(argv, argv+argc, "--coverage") && !has_option(argv, argv+argc, "--annotation");
         const char *prefix = *get_option(argv, argv+argc, "--auc");
         sprintf(afn, "%s.auc.tsv", prefix);
         auc_file = fopen(afn, "w");
@@ -988,7 +988,8 @@ int main(int argc, const char** argv) {
             //process bigwig for annotation/auc
             int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc);
             output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
-            fclose(afp);
+            if(afp)
+                fclose(afp);
             if(ret == 0)
                 fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
             return ret;
