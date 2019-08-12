@@ -1017,6 +1017,25 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
     return 0;
 }
 
+void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_map_t* annotations, FILE* afp, FILE* uafp) {
+    for(auto const c : *chrm_order) {
+        if(!c)
+            continue;
+        std::vector<long*>* annotations_for_chr = (*annotations)[c];
+        for(long z = 0; z < annotations_for_chr->size(); z++) {
+            long start = (*annotations_for_chr)[z][0];
+            long end = (*annotations_for_chr)[z][1];
+            long sum = (*annotations_for_chr)[z][2];
+            fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+            //do uniques if asked to
+            if(uafp) {
+                sum = (*annotations_for_chr)[z][3];
+                fprintf(uafp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
+            }
+        }
+    }
+}
+
 typedef std::unordered_map<std::string, uint64_t> mate2len;
 typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
@@ -1103,8 +1122,13 @@ int main(int argc, const char** argv) {
         {
             std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
             //process bigwig for annotation/auc
-            int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc);
-            output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
+            int keep_order_idx = keep_order?2:-1;
+            int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc, keep_order_idx);
+            //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+            if(keep_order)
+                output_all_coverage_ordered_by_BED(&chrm_order, &annotations, afp, nullptr);
+            else
+                output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(afp)
                 fclose(afp);
             if(ret == 0)
@@ -1624,23 +1648,8 @@ int main(int argc, const char** argv) {
                     annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
-            if(keep_order) {
-                for(auto const c : chrm_order) {
-                    if(!c)
-                        continue;
-                    std::vector<long*>* annotations_for_chr = annotations[c];
-                    for(long z = 0; z < annotations_for_chr->size(); z++) {
-                        long start = (*annotations_for_chr)[z][0];
-                        long end = (*annotations_for_chr)[z][1];
-                        long sum = (*annotations_for_chr)[z][2];
-                        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
-                        if(unique) {
-                            sum = (*annotations_for_chr)[z][3];
-                            fprintf(uafp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
-                        }
-                    }
-                }
-            }
+            if(keep_order)
+                output_all_coverage_ordered_by_BED(&chrm_order, &annotations, afp, uafp);
         }
         if(sum_annotation && auc_file) {
             fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
