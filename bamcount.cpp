@@ -941,7 +941,7 @@ void output_read_sequence_and_qualities(char* qname, int midx, uint8_t* seq, uin
 
 
 typedef std::unordered_map<std::string, bool> chr2bool;
-static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated_auc, annotation_map_t* amap, chr2bool* annotation_chrs_seen, FILE* afp, bool just_auc) {
+static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated_auc, annotation_map_t* amap, chr2bool* annotation_chrs_seen, FILE* afp, bool just_auc, int keep_order_idx = -1) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
     if(bwInit(1<<17) != 0) {
         fprintf(stderr, "Error in bwInit, exiting\n");
@@ -1002,7 +1002,10 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                 last_j = j;
                 (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
                 if(!just_auc)
-                    fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], ostart, end, sum);
+                    if(keep_order_idx == -1)
+                        fprintf(afp, "%s\t%lu\t%lu\t%.0f\n", fp->cl->chrom[tid], ostart, end, sum);
+                    else
+                        (*annotations)[z][keep_order_idx] = sum;
             }
             (*annotation_chrs_seen)[fp->cl->chrom[tid]] = true;
             bwIteratorDestroy(iter);
@@ -1031,8 +1034,7 @@ int main(int argc, const char** argv) {
     }
     std::ios::sync_with_stdio(false);
 
-    uint64_t all_auc = 0;
-    uint64_t annotated_auc = 0;
+
     FILE* auc_file = nullptr;
     bool just_auc = false;
     char afn[1024];
@@ -1044,10 +1046,14 @@ int main(int argc, const char** argv) {
     }
     //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
-    annotation_map_t annotations; 
-    chr2bool annotation_chrs_seen;
-    bool sum_annotation = false;
     FILE* afp = nullptr;
+    annotation_map_t annotations; 
+    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    bool sum_annotation = false;
+    uint64_t all_auc = 0;
+    uint64_t annotated_auc = 0;
+    bool keep_order = true;
+    strlist chrm_order;
     int err = 0;
     const char* annot_prefix = nullptr;
     if(has_option(argv, argv+argc, "--annotation")) {
@@ -1062,8 +1068,9 @@ int main(int argc, const char** argv) {
             std::cerr << "No argument to --annotation" << std::endl;
             return 1;
         }
+        keep_order = !has_option(argv, argv+argc, "--keep-bam-order");
         afp = fopen(afile, "r");
-        err = read_annotation(afp, &annotations);
+        err = read_annotation(afp, &annotations, &chrm_order, keep_order);
         fclose(afp);
         afp = nullptr;
         if(!just_auc) {
@@ -1221,61 +1228,28 @@ int main(int argc, const char** argv) {
     read2len overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
-    annotation_map_t annotations; 
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
-    uint64_t annotated_auc = 0;
+    uint64_t unique_auc = 0;
     uint64_t unique_annotated_auc = 0;
-    FILE* auc_file = nullptr;
-    bool just_auc = false;
-    bool keep_order = true;
-    strlist chrm_order;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
+        const char *bw_fn = nullptr;
         if(has_option(argv, argv+argc, "--bigwig")) {
-            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
+            bw_fn = *get_option(argv, argv+argc, "--bigwig");
             bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
         }
         if(has_option(argv, argv+argc, "--min-unique-qual")) {
-            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             unique = true;
-            if(!just_auc)
+            if(bw_fn)
                 ubwfp = create_bigwig_file(hdr, bw_fn, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
-        }
-        //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
-        //maps chromosome to vector of uint arrays storing start/end of annotated intervals
-        int err = 0;
-        if(has_option(argv, argv+argc, "--annotation")) {
-            sum_annotation = true;
-            const char* afile = *(get_option(argv, argv+argc, "--annotation"));
-            if(!afile) {
-                std::cerr << "No argument to --annotation" << std::endl;
-                return 1;
-            }
-            const char* prefix = *(get_option(argv, argv+argc, "--annotation", 1));
-            if(!prefix) {
-                std::cerr << "No argument to --annotation" << std::endl;
-                return 1;
-            }
-            keep_order = !has_option(argv, argv+argc, "--keep-bam-order");
-            afp = fopen(afile, "r");
-            err = read_annotation(afp, &annotations, &chrm_order, keep_order);
-            fclose(afp);
-            afp = nullptr;
-            if(!just_auc) {
+            if(sum_annotation && !just_auc) {
                 char afn[1024];
-                sprintf(afn, "%s.all.tsv", prefix);
-                afp = fopen(afn, "w");
-                if(ubwfp) {
-                    sprintf(afn, "%s.unique.tsv", prefix);
-                    uafp = fopen(afn, "w");
-                }
+                sprintf(afn, "%s.unique.tsv", annot_prefix);
+                uafp = fopen(afn, "w");
             }
-            assert(!annotations.empty());
-            std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
         }
     }
     fraglen2count* frag_dist = new fraglen2count(1);
@@ -1338,9 +1312,6 @@ int main(int argc, const char** argv) {
         process_cigar_output_args.push_back(&junctions);
     }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
-    //calculates AUC automatically
-    uint64_t unique_auc = 0;
-    uint64_t unique_annotated_auc = 0;
     //the number of reads we actually looked at (didn't filter)
     uint64_t reads_processed = 0;
 
