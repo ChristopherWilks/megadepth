@@ -18,3 +18,13 @@ diff test_starts_ends.tsv tests/test.bam.read_ends.both.unique.tsv
 time ./bcd_runner tests/test2.bam --threads 4 --no-head --junctions test2.bam > test2_run_out 2>&1
 
 diff tests/test2.bam.jxs.tsv test2.bam.jxs.tsv
+
+#test bigwig2sums/auc
+time ./bcd_runner test.bam.all.bw --auc test.bam.bw1 --annotation tests/testbw1.bed test.bam.bw1 >> test_run_out 2>&1
+diff test.bam.bw1.all.tsv tests/testbw1.bed.out.tsv
+diff test.bam.bw1.auc.tsv tests/testbw1.bed.auc
+
+##use different order in BED file from what's in BW to test keep_order == true
+time ./bcd_runner test.bam.all.bw --auc test.bam.bw2 --annotation tests/testbw2.bed test.bam.bw2 >> test_run_out 2>&1
+diff test.bam.bw2.all.tsv tests/testbw2.bed.out.tsv
+diff test.bam.bw2.auc.tsv tests/testbw2.bed.auc
