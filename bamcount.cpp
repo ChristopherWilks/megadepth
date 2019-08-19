@@ -950,7 +950,6 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
         fprintf(errfp, "Error in bwInit, exiting\n");
         return 1;
     }
-    fprintf(stderr, "about to bwOpen %s\n", fn);
     bigWigFile_t *fp = bwOpen(strdup(fn), NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
@@ -1055,9 +1054,7 @@ void split_string(std::string line, char delim, std::vector<std::string>* tokens
 void process_bigwig_worker(std::string bwfn_, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx) {
     //want to just get the filename itself, no path
     std::vector<std::string> tokens;
-    //const char* bwfn = *bwfn_;
     const char* bwfn = bwfn_.c_str();
-    fprintf(stderr, "about to strdup %s\n", bwfn);
     std::string str(strdup(bwfn));
     split_string(str, '/', &tokens);
     char afn[1024];
@@ -1203,18 +1200,15 @@ int main(int argc, const char** argv) {
                 char* bwfn = new char[LINE_BUFFER_LENGTH];
                 size_t length = LINE_BUFFER_LENGTH;
                 ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
-                int i = 0;
                 while(bytes_read != -1) {
                     bwfn[bytes_read-1]='\0';
                     fprintf(stderr, "about to process %s\n", bwfn);
                     threads.push_back(std::thread(process_bigwig_worker, std::string(bwfn), &annotations, &chrm_order, just_auc, keep_order_idx));
-                    threads[i].join();
-                    i++;
                     bytes_read = getline(&bwfn, &length, bw_list_fp);
                 }
                 delete(bwfn);
-                /*for(int i=0; i < threads.size(); i++)
-                    threads[i].join();*/
+                for(int i=0; i < threads.size(); i++)
+                    threads[i].join();
                 fclose(bw_list_fp);
                 if(afp)
                     fclose(afp);
