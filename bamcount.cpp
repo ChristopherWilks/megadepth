@@ -15,6 +15,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 #include <math.h>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
@@ -43,7 +44,9 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "Options:\n"
     "  -h --help            Show this screen.\n"
     "  --version            Show version.\n"
-    "  --threads            # of threads to do BAM decompression\n"
+    "  --threads            # of threads to do: BAM decompression OR compute sums over multiple BigWigs in parallel\n"
+    "                       if the 2nd is intended then a TXT file listing the paths to the BigWigs to process in parallel\n"
+    "                       should be passed in as the main input file instead of a single BigWig file.\n"
     "\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
     "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
@@ -941,15 +944,16 @@ void output_read_sequence_and_qualities(char* qname, int midx, uint8_t* seq, uin
 
 
 typedef std::unordered_map<std::string, bool> chr2bool;
-static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated_auc, annotation_map_t* amap, chr2bool* annotation_chrs_seen, FILE* afp, bool just_auc, int keep_order_idx = -1) {
+static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated_auc, annotation_map_t* amap, chr2bool* annotation_chrs_seen, FILE* afp, bool just_auc, int keep_order_idx = -1, FILE* errfp = stderr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
     if(bwInit(1<<17) != 0) {
-        fprintf(stderr, "Error in bwInit, exiting\n");
+        fprintf(errfp, "Error in bwInit, exiting\n");
         return 1;
     }
+    fprintf(stderr, "about to bwOpen %s\n", fn);
     bigWigFile_t *fp = bwOpen(strdup(fn), NULL, "r");
     if(!fp) {
-        fprintf(stderr, "Error in opening %s as BigWig file, exiting\n", fn);
+        fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return 1;
     }
     uint32_t i, tid, blocksPerIteration;
@@ -965,7 +969,7 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
             if(!iter->data)
             {
-                fprintf(stderr, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                fprintf(errfp, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
                 continue;
             }
             uint32_t num_intervals = iter->intervals->l;
@@ -1036,6 +1040,61 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
     }
 }
 
+//multiple sources for this kind of tokenization, one which was useful was:
+//https://yunmingzhang.wordpress.com/2015/07/14/how-to-read-file-line-by-lien-and-split-a-string-in-c/
+void split_string(std::string line, char delim, std::vector<std::string>* tokens) {
+    tokens->clear();
+    std::stringstream ss(line);
+    std::string token;
+    while(getline(ss, token, delim))
+    {
+        tokens->push_back(token);
+    }
+}
+
+void process_bigwig_worker(std::string bwfn_, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx) {
+    //want to just get the filename itself, no path
+    std::vector<std::string> tokens;
+    //const char* bwfn = *bwfn_;
+    const char* bwfn = bwfn_.c_str();
+    fprintf(stderr, "about to strdup %s\n", bwfn);
+    std::string str(strdup(bwfn));
+    split_string(str, '/', &tokens);
+    char afn[1024];
+    sprintf(afn, "%s.auc.tsv", tokens.back().c_str());
+    FILE* aucfp = fopen(afn, "w");
+    sprintf(afn, "%s.err", tokens.back().c_str());
+    FILE* errfp = fopen(afn, "w");
+    FILE* afp = nullptr;
+    if(!just_auc) {
+        sprintf(afn, "%s.all.tsv", tokens.back().c_str());
+        afp = fopen(afn, "w");
+    }
+    chr2bool annotation_chrs_seen;
+    uint64_t annotated_auc = 0;
+    int ret = process_bigwig(bwfn, nullptr, &annotated_auc, annotations, &annotation_chrs_seen, afp, just_auc, keep_order_idx, errfp = errfp);
+    if(ret != 0) {
+        fprintf(errfp,"FAILED to process bigwig %s\n", bwfn);
+        if(afp)
+            fclose(afp);
+        fclose(errfp);
+        fclose(aucfp);
+        return;
+    }
+    //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+    if(keep_order_idx == 2)
+        output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr);
+    else
+        output_missing_annotations(annotations, &annotation_chrs_seen, afp);
+    if(afp)
+        fclose(afp);
+    fprintf(aucfp, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+    fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
+    fclose(errfp);
+    fclose(aucfp);
+}
+
+
 typedef std::unordered_map<std::string, uint64_t> mate2len;
 typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
@@ -1067,7 +1126,7 @@ int main(int argc, const char** argv) {
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     FILE* afp = nullptr;
     annotation_map_t annotations; 
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    chr2bool annotation_chrs_seen;
     bool sum_annotation = false;
     uint64_t all_auc = 0;
     uint64_t annotated_auc = 0;
@@ -1113,16 +1172,56 @@ int main(int argc, const char** argv) {
                   << std::strerror(errno) << std::endl;
         return 1;
     }
+    
+    //number of bam decompression threads
+    //0 == 1 thread for the whole program, i.e.
+    //decompression shares a single core with processing
+    //This can also indicate the number of parallel threads to process a list of BigWigs for
+    //the purpose of summing over a passed in annotation
+    int nthreads = 0;
+    if(has_option(argv, argv+argc, "--threads")) {
+        const char** nthreads_ = get_option(argv, argv+argc, "--threads");
+        nthreads = atoi(*nthreads_);
+    }
    
     const htsFormat* format = hts_get_format(bam_fh);
     const char* hts_format_ex = hts_format_file_extension(format);
     if(strcmp(hts_format_ex, "bam") != 0)
     {
-        if(bwIsBigWig(strdup(bam_arg), nullptr))
+        int slen = strlen(bam_arg);
+        bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
+        if(is_bw_list_file || bwIsBigWig(strdup(bam_arg), nullptr))
         {
-            std::cerr << "Processing BigWig: \"" << bam_arg << "\"" << std::endl;
+            std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"" << std::endl;
             //process bigwig for annotation/auc
             int keep_order_idx = keep_order?2:-1;
+            //TODO: need to start a thread pool, then feed them a statically defined split of the bigwig file list
+            //maybe as a stretch goal get the filesizes of each BW and load balance the threads
+            if(is_bw_list_file) {
+                std::vector<std::thread> threads;
+                FILE* bw_list_fp = fopen(bam_arg, "r");
+                char* bwfn = new char[LINE_BUFFER_LENGTH];
+                size_t length = LINE_BUFFER_LENGTH;
+                ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
+                int i = 0;
+                while(bytes_read != -1) {
+                    bwfn[bytes_read-1]='\0';
+                    fprintf(stderr, "about to process %s\n", bwfn);
+                    threads.push_back(std::thread(process_bigwig_worker, std::string(bwfn), &annotations, &chrm_order, just_auc, keep_order_idx));
+                    threads[i].join();
+                    i++;
+                    bytes_read = getline(&bwfn, &length, bw_list_fp);
+                }
+                delete(bwfn);
+                /*for(int i=0; i < threads.size(); i++)
+                    threads[i].join();*/
+                fclose(bw_list_fp);
+                if(afp)
+                    fclose(afp);
+                fclose(auc_file);
+                return 0; 
+            }
+            //don't have a list of BigWigs, so just process the single one
             int ret = process_bigwig(bam_arg, &all_auc, &annotated_auc, &annotations, &annotation_chrs_seen, afp, just_auc, keep_order_idx);
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
             if(keep_order)
@@ -1131,13 +1230,15 @@ int main(int argc, const char** argv) {
                 output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(afp)
                 fclose(afp);
-            if(ret == 0)
+            if(ret == 0) {
                 fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+                fclose(auc_file);
+            }
             return ret;
         }
         else
         {
-            std::cerr << "ERROR: Input file is not a BAM/BigWig " << bam_arg << std::endl;
+            std::cerr << "ERROR: Input file is not a BAM (.bam)/BigWig (.bw)/BigWig list file (.txt) " << bam_arg << std::endl;
             return 1;
         }
     }
@@ -1151,14 +1252,6 @@ int main(int argc, const char** argv) {
     }
     if(!has_option(argv, argv+argc, "--no-head")) {
         print_header(hdr);
-    }
-    //number of bam decompression threads
-    //0 == 1 thread for the whole program, i.e.
-    //decompression shares a single core with processing
-    int nthreads = 0;
-    if(has_option(argv, argv+argc, "--threads")) {
-        const char** nthreads_ = get_option(argv, argv+argc, "--threads");
-        nthreads = atoi(*nthreads_);
     }
     hts_set_threads(bam_fh, nthreads);
     
