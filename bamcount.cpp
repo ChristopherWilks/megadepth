@@ -19,9 +19,12 @@
 #include <math.h>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
+#include <sys/stat.h>
 #include "bigWig.h"
 
+
 typedef std::vector<std::string> strvec;
+typedef std::unordered_map<std::string, uint64_t> mate2len;
 
 //used for --annotation where we read a 3+ column BED file
 static const int CHRM_COL=0;
@@ -1055,7 +1058,7 @@ void split_string(std::string line, char delim, strvec* tokens) {
 
 void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx) {
     //want to just get the filename itself, no path
-    for(auto bwfn_ :  bwfns) {
+    for(auto bwfn_ : bwfns) {
         strvec tokens;
         const char* bwfn = bwfn_.c_str();
         fprintf(stderr, "about to process %s\n", bwfn);
@@ -1097,7 +1100,6 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist
 }
 
 
-typedef std::unordered_map<std::string, uint64_t> mate2len;
 typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
@@ -1201,18 +1203,41 @@ int main(int argc, const char** argv) {
             //maybe as a stretch goal get the filesizes of each BW and load balance the threads
             if(is_bw_list_file) {
                 strvec* files_per_thread[nthreads];
-                for(int i=0; i < nthreads; i++)
+                uint64_t bytes_per_thread[nthreads];
+                for(int i=0; i < nthreads; i++) {
                     files_per_thread[i] = new strvec();
+                    bytes_per_thread[i] = 0;
+                }
                 FILE* bw_list_fp = fopen(bam_arg, "r");
                 char* bwfn = new char[LINE_BUFFER_LENGTH];
                 size_t length = LINE_BUFFER_LENGTH;
                 ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
                 int file_idx = 0;
+                struct stat fstat;
+                mate2len file2size;
+                strvec files;
+                std::vector<uint64_t> fsizes;
+                uint64_t total_fsize = 0;
+                uint32_t num_files = 0;
                 while(bytes_read != -1) {
                     bwfn[bytes_read-1]='\0';
                     int thread_i = file_idx++ % nthreads;
-                    files_per_thread[thread_i]->push_back(std::string(strdup(bwfn)));
+                    std::string str(strdup(bwfn));
+                    files.push_back(str);
+                    stat(bwfn, &fstat);
+                    fsizes.push_back(fstat.st_size);
+                    total_fsize += fstat.st_size;
+                    num_files++;
                     bytes_read = getline(&bwfn, &length, bw_list_fp);
+                }
+                //now load balance between threads based on file size
+                uint64_t per_thread_size = total_fsize / nthreads;
+                int thread_i = 0;
+                for(int i=0; i < num_files; i++) {
+                    if(bytes_per_thread[thread_i] + fsizes[i] > per_thread_size && thread_i+1 < nthreads)
+                        thread_i++;
+                    bytes_per_thread[thread_i] += fsizes[i];
+                    files_per_thread[thread_i]->push_back(files[i]);
                 }
                 std::vector<std::thread> threads;
                 for(int i=0; i < nthreads; i++)
