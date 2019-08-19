@@ -21,6 +21,8 @@
 #include <htslib/bgzf.h>
 #include "bigWig.h"
 
+typedef std::vector<std::string> strvec;
+
 //used for --annotation where we read a 3+ column BED file
 static const int CHRM_COL=0;
 static const int START_COL=1;
@@ -1041,7 +1043,7 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
 
 //multiple sources for this kind of tokenization, one which was useful was:
 //https://yunmingzhang.wordpress.com/2015/07/14/how-to-read-file-line-by-lien-and-split-a-string-in-c/
-void split_string(std::string line, char delim, std::vector<std::string>* tokens) {
+void split_string(std::string line, char delim, strvec* tokens) {
     tokens->clear();
     std::stringstream ss(line);
     std::string token;
@@ -1051,44 +1053,47 @@ void split_string(std::string line, char delim, std::vector<std::string>* tokens
     }
 }
 
-void process_bigwig_worker(std::string bwfn_, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx) {
+void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx) {
     //want to just get the filename itself, no path
-    std::vector<std::string> tokens;
-    const char* bwfn = bwfn_.c_str();
-    std::string str(strdup(bwfn));
-    split_string(str, '/', &tokens);
-    char afn[1024];
-    sprintf(afn, "%s.auc.tsv", tokens.back().c_str());
-    FILE* aucfp = fopen(afn, "w");
-    sprintf(afn, "%s.err", tokens.back().c_str());
-    FILE* errfp = fopen(afn, "w");
-    FILE* afp = nullptr;
-    if(!just_auc) {
-        sprintf(afn, "%s.all.tsv", tokens.back().c_str());
-        afp = fopen(afn, "w");
-    }
-    chr2bool annotation_chrs_seen;
-    uint64_t annotated_auc = 0;
-    int ret = process_bigwig(bwfn, nullptr, &annotated_auc, annotations, &annotation_chrs_seen, afp, just_auc, keep_order_idx, errfp = errfp);
-    if(ret != 0) {
-        fprintf(errfp,"FAILED to process bigwig %s\n", bwfn);
+    for(auto bwfn_ :  bwfns) {
+        strvec tokens;
+        const char* bwfn = bwfn_.c_str();
+        fprintf(stderr, "about to process %s\n", bwfn);
+        std::string str(strdup(bwfn));
+        split_string(str, '/', &tokens);
+        char afn[1024];
+        sprintf(afn, "%s.auc.tsv", tokens.back().c_str());
+        FILE* aucfp = fopen(afn, "w");
+        sprintf(afn, "%s.err", tokens.back().c_str());
+        FILE* errfp = fopen(afn, "w");
+        FILE* afp = nullptr;
+        if(!just_auc) {
+            sprintf(afn, "%s.all.tsv", tokens.back().c_str());
+            afp = fopen(afn, "w");
+        }
+        chr2bool annotation_chrs_seen;
+        uint64_t annotated_auc = 0;
+        int ret = process_bigwig(bwfn, nullptr, &annotated_auc, annotations, &annotation_chrs_seen, afp, just_auc, keep_order_idx, errfp = errfp);
+        if(ret != 0) {
+            fprintf(errfp,"FAILED to process bigwig %s\n", bwfn);
+            if(afp)
+                fclose(afp);
+            fclose(errfp);
+            fclose(aucfp);
+            return;
+        }
+        //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+        if(keep_order_idx == 2)
+            output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr);
+        else
+            output_missing_annotations(annotations, &annotation_chrs_seen, afp);
         if(afp)
             fclose(afp);
+        fprintf(aucfp, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+        fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
         fclose(errfp);
         fclose(aucfp);
-        return;
     }
-    //if we wanted to keep the chromosome order of the annotation output matching the input BED file
-    if(keep_order_idx == 2)
-        output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr);
-    else
-        output_missing_annotations(annotations, &annotation_chrs_seen, afp);
-    if(afp)
-        fclose(afp);
-    fprintf(aucfp, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
-    fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
-    fclose(errfp);
-    fclose(aucfp);
 }
 
 
@@ -1195,17 +1200,23 @@ int main(int argc, const char** argv) {
             //TODO: need to start a thread pool, then feed them a statically defined split of the bigwig file list
             //maybe as a stretch goal get the filesizes of each BW and load balance the threads
             if(is_bw_list_file) {
-                std::vector<std::thread> threads;
+                strvec* files_per_thread[nthreads];
+                for(int i=0; i < nthreads; i++)
+                    files_per_thread[i] = new strvec();
                 FILE* bw_list_fp = fopen(bam_arg, "r");
                 char* bwfn = new char[LINE_BUFFER_LENGTH];
                 size_t length = LINE_BUFFER_LENGTH;
                 ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
+                int file_idx = 0;
                 while(bytes_read != -1) {
                     bwfn[bytes_read-1]='\0';
-                    fprintf(stderr, "about to process %s\n", bwfn);
-                    threads.push_back(std::thread(process_bigwig_worker, std::string(bwfn), &annotations, &chrm_order, just_auc, keep_order_idx));
+                    int thread_i = file_idx++ % nthreads;
+                    files_per_thread[thread_i]->push_back(std::string(strdup(bwfn)));
                     bytes_read = getline(&bwfn, &length, bw_list_fp);
                 }
+                std::vector<std::thread> threads;
+                for(int i=0; i < nthreads; i++)
+                    threads.push_back(std::thread(process_bigwig_worker, std::ref(*(files_per_thread[i])), &annotations, &chrm_order, just_auc, keep_order_idx));
                 delete(bwfn);
                 for(int i=0; i < threads.size(); i++)
                     threads[i].join();
