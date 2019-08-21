@@ -963,7 +963,6 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
     //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
     //raw mode we only want to process BW intervals once
-    //uint8_t* intervals_seen = new uint8_t[STARTING_NUM_INTERVALS];
     std::vector<bool> intervals_seen(STARTING_NUM_INTERVALS,false);
     //loop through all the chromosomes in the BW
     for(tid = 0; tid < fp->cl->nKeys; tid++)
@@ -1022,7 +1021,6 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                     {
                         long last_k = end > iend ? iend : end;
                         //raw mode
-                        //FIX output, currently only outputting 0's
                         if(op == craw) {
                             k = iend;
                             //only want to output intervals once
@@ -1126,7 +1124,6 @@ static void output_missing_annotations(const annotation_map_t* annotations, cons
             for(long z = 0; z < annotations_for_chr->size(); z++) {
                 long start = (*annotations_for_chr)[z][0];
                 long end = (*annotations_for_chr)[z][1];
-                //fprintf(ofp, "%s\t%lu\t%lu\t0\n", kv.first.c_str(), start, end);
                 (*printPtr)(ofp, kv.first.c_str(), start, end, 0.000, nullptr, z);
             }
         }
@@ -1173,8 +1170,6 @@ void split_string(std::string line, char delim, strvec* tokens) {
         tokens->push_back(token);
     }
 }
-//TODO: Fix shared array of counts for 
-//typedef std::unordered_map<std::string, std::vector<double>*> str2dblist;
 void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx, Op op) {
     //want to just get the filename itself, no path
     str2dblist store_local;
