@@ -952,7 +952,8 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
         fprintf(errfp, "Error in bwInit, exiting\n");
         return 1;
     }
-    bigWigFile_t *fp = bwOpen(strdup(fn), NULL, "r");
+    char* fn_copy = strdup(fn);
+    bigWigFile_t *fp = bwOpen(fn_copy, NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return 1;
@@ -1096,6 +1097,8 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
 
     bwClose(fp);
     bwCleanup();
+    if(fn_copy);
+        delete(fn_copy);
     return 0;
 }
 
@@ -1173,11 +1176,13 @@ void split_string(std::string line, char delim, strvec* tokens) {
 void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist* chrm_order, bool just_auc, int keep_order_idx, Op op) {
     //want to just get the filename itself, no path
     str2dblist store_local;
+    char* bwfn_copy;
     for(auto bwfn_ : bwfns) {
         strvec tokens;
         const char* bwfn = bwfn_.c_str();
         fprintf(stderr, "about to process %s\n", bwfn);
-        std::string str(strdup(bwfn));
+        bwfn_copy = strdup(bwfn);
+        std::string str(bwfn_copy);
         split_string(str, '/', &tokens);
         char afn[1024];
         /*sprintf(afn, "%s.auc.tsv", tokens.back().c_str());
@@ -1213,7 +1218,12 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t* annotations, strlist
         fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
         fclose(errfp);
         //fclose(aucfp);
+        if(bwfn_copy)
+            delete(bwfn_copy);
     }
+    //hold off on final deletion, for performance
+    /*for( auto mitr : store_local)
+        delete mitr.second;*/
 }
 
 Op get_operation(const char* opstr) {
