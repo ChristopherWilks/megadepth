@@ -29,6 +29,8 @@ typedef std::unordered_map<std::string, double*> str2dblist;
 
 uint64_t MAX_INT = (2^63);
 uint64_t BLOCKS_PER_BW_ITERATION = 1000000000;
+//how many intervals to start with for a chromosome in a BigWig file
+uint64_t STARTING_NUM_INTERVALS = 1000000;
 //used for --annotation where we read a 3+ column BED file
 static const int CHRM_COL=0;
 static const int START_COL=1;
@@ -960,6 +962,9 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
     blocksPerIteration = BLOCKS_PER_BW_ITERATION;
     //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
+    //raw mode we only want to process BW intervals once
+    //uint8_t* intervals_seen = new uint8_t[STARTING_NUM_INTERVALS];
+    std::vector<bool> intervals_seen(STARTING_NUM_INTERVALS,false);
     //loop through all the chromosomes in the BW
     for(tid = 0; tid < fp->cl->nKeys; tid++)
     {
@@ -972,12 +977,12 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                 continue;
             }
             uint32_t num_intervals = iter->intervals->l;
-            //raw mode we only want to process BW intervals once
-            uint8_t intervals_seen[num_intervals];
-            if(op == craw)
-                for(int i = 0; i < num_intervals; i++)
-                    intervals_seen[i] = 0;
-
+            if(op == csum) {
+                if(num_intervals > intervals_seen.size())
+                    intervals_seen.resize(num_intervals, false);
+                for(int i = 0; i < intervals_seen.size(); i++)
+                    intervals_seen[i] = false;
+            }
             uint32_t istart = iter->intervals->start[0];
             uint32_t iend = iter->intervals->end[num_intervals-1];
             std::vector<double*>* annotations = (*amap)[fp->cl->chrom[tid]];
@@ -986,14 +991,15 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
             long asz = annotations->size();
             double* local_vals;
             //if running in multithreaded mode, want to store the values locally
+            //but also don't want to reallocate for every new bigwig file, so
+            //we allocate once per thread per chromosome
             if(store_local) {
                 if(store_local->find(fp->cl->chrom[tid]) == store_local->end())
-                    local_vals = new double(asz);
-                else {
+                    local_vals = new double[asz];
+                else
                     local_vals = (*store_local)[fp->cl->chrom[tid]];
-                    for(int i = 0; i < asz; i++)
-                        local_vals[i] = 0.0;
-                }
+                for(int i = 0; i < asz; i++)
+                    local_vals[i] = 0.0;
             }
             //loop through annotation intervals as outer loop
             for(z = 0; z < asz; z++) {
@@ -1020,15 +1026,16 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                         if(op == craw) {
                             k = iend;
                             //only want to output intervals once
-                            if(intervals_seen[j]==1)
+                            if(intervals_seen[j])
                                 continue;
-                            intervals_seen[j] = 1;
+                            intervals_seen[j] = true;
                             //don't try to keep order, just output the intervals as they are in the bigwig
                             fprintf(afp, "%s\t%u\t%u\t%.3f\n", fp->cl->chrom[tid], istart, iend, iter->intervals->value[j]);
                             continue;
                         }
                         //stat mode
                         else {
+                            //avoid having if's in the inner loops as much as possible
                             switch(op) {
                                 case csum:
                                 case cmean:
@@ -1057,7 +1064,7 @@ static int process_bigwig(const char* fn, uint64_t* all_auc, uint64_t* annotated
                 last_j = j;
                 if(op == csum)
                     (*annotated_auc) = (*annotated_auc) + ((uint32_t) sum);
-                if(!just_auc) {
+                if(!just_auc || op != csum) {
                     //0-based start
                     double annot_length = end - ostart;
                     double value = sum;
@@ -1103,11 +1110,11 @@ void print_long_shared(FILE* afp,const char* c, long start, long end, double val
 }
 
 void print_double_local(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, start, end, val);
+        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, start, end, local_vals[z]);
 }
 
 void print_double_shared(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, start, end, local_vals[z]);
+        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, start, end, val);
 }
 
 static void output_missing_annotations(const annotation_map_t* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp, Op op = csum) {
