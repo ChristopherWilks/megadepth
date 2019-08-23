@@ -1436,7 +1436,6 @@ int main(int argc, const char** argv) {
     if(!has_option(argv, argv+argc, "--no-head")) {
         print_header(hdr);
     }
-    //TODO: set cache size: hts_set_cache_size(fp, cache_size);
     hts_set_threads(bam_fh, nthreads);
     
     //setup list of callbacks for the process_cigar()
@@ -1623,48 +1622,6 @@ int main(int argc, const char** argv) {
         bam1_core_t *c = &rec->core;
         //read name
         char* qname = bam_get_qname(rec);
-        //*******bam2fastq
-        if(bam2fastq) {
-            if(filter_in > -1 && (c->flag & filter_in) != filter_in)
-                continue;
-            if(filter_out > -1 && (c->flag & filter_out) == filter_out)
-                continue;
-            bool reversed = re_reversed && (c->flag & 16) != 0;
-            bool multi_segment = (c->flag & 1) != 0;
-            uint8_t *seq = bam_get_seq(rec);
-            uint8_t *qual = bam_get_qual(rec);
-            auto iter = read_mate.find(qname);
-            //found a mate, print out both
-            if(!one_file && multi_segment && iter != read_mate.end()) {
-                bool last_segment = (c->flag & 128) != 0;
-                uint8_t* seq_qual = iter->second;
-                const char* mate_qname = iter->first.c_str();
-                std::ostream* outfh = last_segment ? &fq1_file : &fq2_file;
-                int midx = last_segment ? 1 : 2;
-                int seq_len = strlen((char*) (seq_qual+1));
-                bool mate_reversed = seq_qual[0];
-                output_read_sequence_and_qualities(qname, midx, seq_qual+1, (seq_qual+seq_len)+2, seq_len, mate_reversed, outfh, one_file);
-                delete read_mate[qname];
-                read_mate.erase(qname);
-
-                midx = last_segment ? 2 : 1;
-                outfh = last_segment ? &fq2_file : &fq1_file;
-                output_read_sequence_and_qualities(qname, midx, seq, qual, c->l_qseq, reversed, outfh, one_file);
-            }
-            else if(!one_file && multi_segment) {
-                uint8_t* seq_qual = new uint8_t[(2*c->l_qseq)+3];
-                seq_qual[0]=reversed;
-                memcpy(seq_qual+1, seq, c->l_qseq);
-                seq_qual[c->l_qseq+1]='\0';
-                memcpy(seq_qual+c->l_qseq+2, qual, c->l_qseq);
-                seq_qual[(2*c->l_qseq)+3]='\0';
-                read_mate[qname] = seq_qual;
-            }
-            else
-                output_read_sequence_and_qualities(qname, 1, seq, qual, c->l_qseq, reversed, &fq0_file, one_file);
-            
-            continue;
-        }
         //*******Main Quantification Conditional (for ref & alt coverage, frag dist)
         //filter OUT unmapped and secondary alignments
         if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
@@ -1700,6 +1657,7 @@ int main(int argc, const char** argv) {
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
+                        //TODO: streamline hashmap accesses to annotations
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                             sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
                             if(unique) {
@@ -1821,7 +1779,8 @@ int main(int argc, const char** argv) {
                 }
             }
             //*******Run various cigar-related functions for 1 pass through the cigar string
-            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
+            if(process_cigar_callbacks.size() > 0)
+                process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
 
             //*******Extract jx co-occurrences (not all junctions though)
             if(extract_junctions) {
