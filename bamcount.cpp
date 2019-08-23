@@ -1326,6 +1326,7 @@ int main(int argc, const char** argv) {
         nthreads = atoi(*nthreads_);
     }
    
+    bool LOAD_BALANCE = false;
     const htsFormat* format = hts_get_format(bam_fh);
     const char* hts_format_ex = hts_format_file_extension(format);
     if(strcmp(hts_format_ex, "bam") != 0)
@@ -1366,20 +1367,29 @@ int main(int argc, const char** argv) {
                     int thread_i = file_idx++ % nthreads;
                     std::string str(strdup(bwfn));
                     files.push_back(str);
-                    stat(bwfn, &fstat);
-                    fsizes.push_back(fstat.st_size);
-                    total_fsize += fstat.st_size;
+                    if(LOAD_BALANCE) {
+                        stat(bwfn, &fstat);
+                        fsizes.push_back(fstat.st_size);
+                        total_fsize += fstat.st_size;
+                    }
                     num_files++;
                     bytes_read = getline(&bwfn, &length, bw_list_fp);
                 }
                 //now load balance between threads based on file size
                 uint64_t per_thread_size = total_fsize / nthreads;
+                int max_num_files_per_thread = num_files / nthreads;
                 int thread_i = 0;
+                int num_files_current_thread = 0;
                 for(int i=0; i < num_files; i++) {
-                    if(bytes_per_thread[thread_i] + fsizes[i] > per_thread_size && thread_i+1 < nthreads)
+                    if((LOAD_BALANCE && bytes_per_thread[thread_i] + fsizes[i] > per_thread_size) ||
+                        (num_files_current_thread >= max_num_files_per_thread) && thread_i+1 < nthreads) {
                         thread_i++;
-                    bytes_per_thread[thread_i] += fsizes[i];
+                        num_files_current_thread = 0;
+                    }
+                    if(LOAD_BALANCE)
+                        bytes_per_thread[thread_i] += fsizes[i];
                     files_per_thread[thread_i]->push_back(files[i]);
+                    num_files_current_thread++;
                 }
                 std::vector<std::thread> threads;
                 for(int i=0; i < nthreads; i++)
@@ -1426,6 +1436,7 @@ int main(int argc, const char** argv) {
     if(!has_option(argv, argv+argc, "--no-head")) {
         print_header(hdr);
     }
+    //TODO: set cache size: hts_set_cache_size(fp, cache_size);
     hts_set_threads(bam_fh, nthreads);
     
     //setup list of callbacks for the process_cigar()
