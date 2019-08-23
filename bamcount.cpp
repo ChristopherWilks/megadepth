@@ -464,6 +464,26 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
         arr[i] = 0;
 }
 
+uint64_t print_array_auc(const uint32_t* arr, const long arr_sz) {
+    if(arr_sz == 0)
+        return 0;
+    uint64_t auc = 0;
+    bool first = true;
+    float running_value = arr[0];
+    uint32_t last_pos = 0;
+    for(uint32_t i = 1; i < arr_sz; i++) {
+        if(running_value != arr[i]) {
+            //based on wiggletools' AUC calculation
+            auc += (i - last_pos) * ((long) running_value);
+            running_value = arr[i];
+            last_pos = i;
+            first = false;
+        }
+    }
+    auc += (arr_sz - last_pos) * ((long) running_value);
+    return auc;
+}
+
 //used for buffering up text/gz output
 int OUT_BUFF_SZ=4000000;
 int COORD_STR_LEN=34;
@@ -474,6 +494,8 @@ static uint64_t print_array(const char* prefix,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         const bool just_auc = false) {
+    if(arr_sz == 0)
+        return 0;
     bool first = true;
     bool first_print = true;
     float running_value = 0;
@@ -487,6 +509,8 @@ static uint64_t print_array(const char* prefix,
     char buf[OUT_BUFF_SZ];
     int buf_written = 0;
     char* bufptr = buf;
+    if(just_auc)
+        return print_array_auc(arr, arr_sz);
     //TODO: speed this up, maybe keep a separate vector
     //which tracks where the runs of the same value stop
     //then only loop through that one w/o the if's
@@ -497,53 +521,37 @@ static uint64_t print_array(const char* prefix,
     //the type of output ahead of time to get rid of the if's
     //
     //this will print the coordinates in base-0
-    for(uint32_t i = 0; i < arr_sz; i++) {
-        if(first || running_value != arr[i]) {
-            if(!first) {
-                if(running_value > 0 || !skip_zeros) {
-                    //based on wiggletools' AUC calculation
-                    auc += (i - last_pos) * ((long) running_value);
-                    if(not just_auc) {
-                        if(bwfp && first_print)
-                            bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
-                        else if(bwfp)
-                            bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
-                        else {
-                            if(buf_written >= num_lines_per_buf) {
-                                bufptr[0]='\0';
-                                fprintf(stdout, "%s", buf); 
-                                bufptr = buf;
-                                buf_written = 0;
-                            }
-                            bufptr += sprintf(bufptr, "%s\t%u\t%u\t%.0f\n", chrm, last_pos, i, running_value);
-                            buf_written++;
-                        } 
-                        first_print = false;
-                    }
-                }
+    uint32_t i = 0;
+    running_value = arr[i];
+    for(i = 1; i < arr_sz; i++) {
+        if(running_value != arr[i]) {
+            if(running_value > 0 || !skip_zeros) {
+                auc += (i - last_pos) * ((long) running_value);
+                bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
+                first = false;
+                running_value = arr[i];
+                last_pos = i;
+                break;
             }
-            first = false;
-            running_value = arr[i];
-            last_pos = i;
+        }
+    }
+    //split loop so we avoid extra if's in the inner loop
+    for(; i < arr_sz; i++) {
+        if(running_value != arr[i]) {
+            if(running_value > 0 || !skip_zeros) {
+                auc += (i - last_pos) * ((long) running_value);
+                bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
+                running_value = arr[i];
+                last_pos = i;
+            }
         }
     }
     if(!first) {
-        if(running_value > 0 || !skip_zeros) {
-            auc += (arr_sz - last_pos) * ((long) running_value);
-            if(not just_auc) {
-                if(bwfp && first_print)
-                    bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-                else if(bwfp)
-                    bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-                else {
-                    if(buf_written > 0) {
-                        bufptr[0]='\0';
-                        fprintf(stdout, "%s", buf); 
-                    }
-                    fprintf(stdout, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
-                }
-            }
-        }
+        auc += (arr_sz - last_pos) * ((long) running_value);
+        if(bwfp && first_print)
+            bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+        else if(bwfp)
+            bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
     }
     return auc;
 }
@@ -1873,6 +1881,7 @@ int main(int argc, const char** argv) {
                 sprintf(prefix, "ucov\t%d", ptid);
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
             }
+            //TODO: streamline annotation hash accesses
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 int keep_order_idx = keep_order?2:-1;
                 sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
