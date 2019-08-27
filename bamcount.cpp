@@ -625,7 +625,8 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     if(coverages && !double_count && (rec->core.flag & BAM_FPROPER_PAIR) == 2) {
         if(rec->core.tid == rec->core.mtid &&
                 end_pos > mrefpos && 
-                refpos < mrefpos) {
+                refpos <= mrefpos &&
+                overlapping_mates->find(tn) == overlapping_mates->end()) {
             const uint32_t* mcigar = bam_get_cigar(rec);
             uint32_t n_cigar = rec->core.n_cigar;
             uint32_t* mate_info = new uint32_t[n_cigar+3];

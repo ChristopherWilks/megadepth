@@ -18,3 +18,7 @@ diff test_starts_ends.tsv tests/test.bam.read_ends.both.unique.tsv
 time ./bcd_runner tests/test2.bam --threads 4 --no-head --junctions test2.bam > test2_run_out 2>&1
 
 diff tests/test2.bam.jxs.tsv test2.bam.jxs.tsv
+
+#now test same-start alignments for overlapping pairs
+./bcd_runner tests/test3.bam --coverage --no-head > t3.tsv
+diff tests/test3.out.tsv t3.tsv
