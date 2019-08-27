@@ -22,3 +22,7 @@ diff tests/test2.bam.jxs.tsv test2.bam.jxs.tsv
 #now test same-start alignments for overlapping pairs
 ./bcd_runner tests/test3.bam --coverage --no-head > t3.tsv
 diff tests/test3.out.tsv t3.tsv
+
+#with uniques
+./bcd_runner tests/test3.bam --coverage --no-head --min-unique-qual 10 --bigwig test3 --auc test3
+diff tests/test3.auc.out.tsv test3.auc.tsv
