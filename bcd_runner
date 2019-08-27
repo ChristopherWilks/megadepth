@@ -3,4 +3,4 @@
 p=$(dirname $0)
 
 export LD_LIBRARY_PATH=$p/libBigWig:$p/htslib:$LD_LIBRARY_PATH
-$p/bamcount-debug "$@"
+$p/bamcount_debug "$@"
