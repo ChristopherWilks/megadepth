@@ -13,7 +13,7 @@ done
 diff tests/test.bam.mosdepth.bwtool.all_aucs test.bam.auc.tsv
 
 cat test.starts.tsv test.ends.tsv | sort -k1,1 -k2,2n -k3,3n > test_starts_ends.tsv
-diff test_starts_ends.tsv tests/test.bam.read_ends.both.unique.tsv
+diff test_starts_ends.tsv <(sort -k1,1 -k2,2n -k3,3n tests/test.bam.read_ends.both.unique.tsv)
 
 time ./bcd_runner tests/test2.bam --threads 4 --no-head --junctions test2.bam > test2_run_out 2>&1
 
