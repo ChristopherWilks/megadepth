@@ -560,12 +560,12 @@ static void process_cigar(int n_cigar, const uint32_t *cigar, char** cigar_str, 
 //calculates the mapped length of an alignment
 static void maplength(const int op, const int len, args_list* out) {
     int type = bam_cigar_type(op);
-    if ((type & 1) && (type & 2)) *((uint32_t*) (*out)[0]) += len;
+    if ((type & 1) && (type & 2)) *((uint64_t*) (*out)[0]) += len;
 }
 
 static void end_genomic_coord(const int op, const int len, args_list* out) {
     int type = bam_cigar_type(op);
-    if (type & 2) *((uint32_t*) (*out)[0]) += len;
+    if (type & 2) *((uint64_t*) (*out)[0]) += len;
 }
 
 static const int32_t align_length(const bam1_t *rec) {
