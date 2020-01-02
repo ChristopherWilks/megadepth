@@ -196,16 +196,3 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 | 12*    | Mate list of junction coordinates (comma-delimited)                                   |
 
 \*optional, output if a 2nd mate is present and has the required number of junctions.
-
-### `bamcount --bam2fastq <output_file_prefix>`
-
-Entirely separate mode from the other subcommands, this takes a BAM and outputs one or more FASTQ files (uncompressed).
-
-Additional options:
-
- * `--filter-out <int>` same as `samtools -F <int>`, skips alignments with that bitflag set
- * `--filter-in <int>`  same as `samtools -f <int>`, only includes alignments with that bitflag set 
- * `--re-reverse` same as `Picard SamToFastq -RE_REVERSE` will reverse complement sequences which were aligned to the reverse strand
- * `--one-file` force output to one FASTQ file, even if paired
- 
- If `--one-file` is not set, `bamcount` will attempt to output all paired sequences to 2 separate FASTQ files and any non-paired sequences to a 3rd file.
