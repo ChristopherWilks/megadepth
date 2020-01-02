@@ -22,7 +22,7 @@ mkdir -p build && cd build && cmake .. && make
 ## Usage
 
 ```
-bamcount --coverage /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
+bamcount /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
 ```
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
@@ -39,7 +39,7 @@ While any given subcommand may not be particularly fast on its own, doing them a
 Subcommand `--coverage` is the only subcommand that will output a BigWig file (currently).
 However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
 
-### `bamcount --auc <output_file_prefix>`
+### `bamcount /path/to/bamfile --auc <output_file_prefix>`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
@@ -48,16 +48,16 @@ This will also report additional counts for:
  
 This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
 
-### `bamcount --coverage`
+### `bamcount /path/to/bamfile --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
 Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
-### `bamcount --coverage --min-unique-qual <qual_value>`
+### `bamcount /path/to/bamfile --coverage --min-unique-qual <qual_value>`
 
 In addition to producing coverage output for all reads, will also produce coverage output only for reads which have a mapping quality (MAPQ) >= <qual_value> (typically set to `10`.  
 
-### `bamcount --coverage --annotation <annotated_file.bed> <output_file_prefix>`
+### `bamcount /path/to/bamfile --coverage --annotation <annotated_file.bed> <output_file_prefix>`
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
@@ -68,16 +68,16 @@ Bamcount will output the summed coverages for the annotation in contiguous block
 
 This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
  
-### `bamcount --coverage --double-count`
+### `bamcount /path/to/bamfile --coverage --double-count`
 
 By default, `bamcount --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
-### `bamcount --coverage --bigwig <output_file_prefix>`
+### `bamcount /path/to/bamfile --coverage --bigwig <output_file_prefix>`
 
 Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
 
-### `bamcount --frag-dist <output_file_prefix>`
+### `bamcount /path/to/bamfile --frag-dist <output_file_prefix>`
 
 Outputs fragment length distribution adjusting for intron lengths.
 
@@ -100,7 +100,7 @@ Intron length(s) in the paired alignments are also subtracted from the `TLEN` fi
 
 These numbers should be taken as an estimation of the fragment length distribtion.
 
-### `bamcount --alts <output_file_prefix>`
+### `bamcount /path/to/bamfile --alts <output_file_prefix>`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
@@ -132,7 +132,7 @@ of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
 
-### `bamcount --alts --include-softclip <output_file_prefix>`
+### `bamcount /path/to/bamfile --alts --include-softclip <output_file_prefix>`
 
 In addition to the alternate base output, this reports the bases
 that were softclipped at the ends (start/end) of the read.
@@ -148,7 +148,7 @@ Warning: using this option w/o modifiers (e.g. `--only-polya`)
 could blow up the `--alts` output size as the full softclipped
 sequence is printed in the 4th column in the table above ("Extra info").
 
-### `bamcount --alts --include-softclip <output_file_prefix> --only-polya`
+### `bamcount /path/to/bamfile --alts --include-softclip <output_file_prefix> --only-polya`
 
 If reporting softclipped bases, this option will limit the report to only
 those bases that have the following:
@@ -170,7 +170,7 @@ Output is comma separated with 7 fields:
 | 6     | Base (A/T)                                                                       |
 | 7     | Count of the base in column 6                                                    |
 
-### `bamcount --junctions <output_file_prefix>`
+### `bamcount /path/to/bamfile --junctions <output_file_prefix>`
 
 Extract locally co-occurring junctions from BAM.
 
