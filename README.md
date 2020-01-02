@@ -8,7 +8,7 @@ BigWig and BAM related utilities.
     * See `get_htslib.sh` for a script that gets a recent version and compiles it with minimal dependencies
 * [libBigWig](https://github.com/dpryan79/libBigWig)
     * See `get_libBigWig.sh` for a script that gets a recent version and compiles it
-* zlib static lib
+* zlib static library [only if building a static binary]
     * See `get_zlib.sh` for a script that gets a recent version and compiles the static library
 
 ## Compiling
