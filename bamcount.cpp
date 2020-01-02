@@ -1433,7 +1433,8 @@ int main(int argc, const char** argv) {
                 if(sz >= 4 || (paired && sz >= 2)) {
                     jx_str = new char[2048];
                     //coordinates are 1-based chromosome
-                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    //int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = refpos + (*cl)[jx];
                         if(jx % 2 == 0) {
