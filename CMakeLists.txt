@@ -4,7 +4,7 @@ project(bamcount)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DBAMCOUNT_VERSION=\"\\\"`cat ../VERSION`\\\"\"")
 add_executable(bamcount_dynamic bamcount.cpp)
-add_executable(bamcount_static bamcount.cpp)
+#add_executable(bamcount_static bamcount.cpp)
 include_directories(htslib libBigWig)
 
 find_package(Threads REQUIRED)
@@ -18,4 +18,4 @@ endif()
 
 target_link_libraries(bamcount_dynamic z hts BigWig -L${CMAKE_SOURCE_DIR}/htslib -L${CMAKE_SOURCE_DIR}/libBigWig)
 #requires static libraries for both zlib and pthread
-target_link_libraries(bamcount_static -static ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a -lpthread)
+#target_link_libraries(bamcount_static -static ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a -lpthread)
