@@ -196,3 +196,8 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 | 12*    | Mate list of junction coordinates (comma-delimited)                                   |
 
 \*optional, output if a 2nd mate is present and has the required number of junctions.
+
+If you get a core dump when running on longer reads (e.g. BAM's produced by PacBio/Oxford Nanopore sequencing),
+then try adding the argument `--long-reads` as it will enlarge the buffer used to store the output junction string.
+
+This enables bamcount to have a better chance of handling really long CIGAR strings.
