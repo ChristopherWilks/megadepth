@@ -44,7 +44,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  -h --help            Show this screen.\n"
     "  --version            Show version.\n"
     "  --threads            # of threads to do BAM decompression\n"
-    "\n"
+    "  --longreads          modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
     "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
     "                       Writes to a TSV file <prefix>.jxs.tsv\n"
@@ -1213,6 +1213,15 @@ int main(int argc, const char** argv) {
 
     char* cigar_str = new char[10000];
 
+    bool long_reads = false;
+    if(has_option(argv, argv+argc, "--long-reads")) {
+        long_reads = true;
+    }
+    int jx_str_sz = 2048;
+    if(long_reads)
+        //enough for the cigar string and ~100 junctions
+        jx_str_sz = 12048;
+
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -1431,10 +1440,10 @@ int main(int argc, const char** argv) {
                 char* jx_str = nullptr;
                 //first create jx string for any of the normal conditions
                 if(sz >= 4 || (paired && sz >= 2)) {
-                    jx_str = new char[2048];
+                    jx_str = new char[jx_str_sz];
                     //coordinates are 1-based chromosome
-                    //int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
-                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig);
+                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    //int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = refpos + (*cl)[jx];
                         if(jx % 2 == 0) {
