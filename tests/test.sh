@@ -26,3 +26,7 @@ diff tests/test3.out.tsv t3.tsv
 #with uniques
 ./bcd_runner tests/test3.bam --coverage --no-head --min-unique-qual 10 --bigwig test3 --auc test3
 diff tests/test3.auc.out.tsv test3.auc.tsv
+
+#long reads support for junctions
+./bcd_runner tests/long_reads.bam --junctions long_reads.bam --long-reads
+diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
