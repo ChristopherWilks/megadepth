@@ -1081,10 +1081,14 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
             if(!iter->data)
             {
-                fprintf(errfp, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                fprintf(errfp, "WARNING: no interval data for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
                 continue;
             }
             uint32_t num_intervals = iter->intervals->l;
+            if(num_intervals == 0) {
+                fprintf(errfp, "WARNING: 0 intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                continue;
+            }
             if(op == csum) {
                 if(num_intervals > intervals_seen.size())
                     intervals_seen.resize(num_intervals, false);
