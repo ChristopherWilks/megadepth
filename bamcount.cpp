@@ -51,8 +51,8 @@ typedef std::unordered_map<std::string, uint64_t> mate2len;
 typedef std::unordered_map<std::string, double*> str2dblist;
 
 uint64_t MAX_INT = (2^63);
-uint64_t BLOCKS_PER_BW_ITERATION = 100000000000;
 //how many intervals to start with for a chromosome in a BigWig file
+//uint64_t STARTING_NUM_INTERVALS = 1000;
 uint64_t STARTING_NUM_INTERVALS = 1000000;
 //used for --annotation where we read a 3+ column BED file
 static const int CHRM_COL=0;
@@ -1016,8 +1016,8 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
         return 1;
     }
     uint32_t i, tid, blocksPerIteration;
-    //ask for huge # of blocks to ensure we get all in one go
-    blocksPerIteration = BLOCKS_PER_BW_ITERATION;
+    //better to ask for a few blocks for better memory and time stats
+    blocksPerIteration = 10;
     bwOverlapIterator_t *iter = nullptr;
     uint64_t total_num_intervals = 0;
     //loop through all the chromosomes in the BW
@@ -1029,15 +1029,18 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
             fprintf(errfp, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
             continue;
         }
-        uint32_t num_intervals = iter->intervals->l;
-        total_num_intervals+=num_intervals;
-        uint32_t istart = 0;
-        uint32_t iend = 0;
-        for(int j = 0; j < num_intervals; j++) {
-            istart = iter->intervals->start[j];
-            iend = iter->intervals->end[j];
-            double value = (iend-istart) * iter->intervals->value[j];
-            (*all_auc) += value;
+        while(iter->data) {
+            uint32_t num_intervals = iter->intervals->l;
+            total_num_intervals+=num_intervals;
+            uint32_t istart = 0;
+            uint32_t iend = 0;
+            for(int j = 0; j < num_intervals; j++) {
+                istart = iter->intervals->start[j];
+                iend = iter->intervals->end[j];
+                double value = (iend-istart) * iter->intervals->value[j];
+                (*all_auc) += value;
+            }
+            iter = bwIteratorNext(iter);
         }
         bwIteratorDestroy(iter);
     }
@@ -1067,8 +1070,9 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
         return 1;
     }
     uint32_t i, tid, blocksPerIteration;
-    //ask for huge # of blocks to ensure we get all in one go
-    blocksPerIteration = BLOCKS_PER_BW_ITERATION;
+    //ask for huge # of blocks per chromosome to ensure we get all in one go
+    //(this is for convenience, not performance)
+    blocksPerIteration = 4000000;
     //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
     //raw mode we only want to process BW intervals once
