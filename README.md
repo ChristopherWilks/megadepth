@@ -2,25 +2,13 @@
 
 BigWig and BAM related utilities.
 
-## Build dependencies
+We strongly recommend use of the pre-compiled,  [statically compiled binary](https://github.com/ChristopherWilks/bamcount/releases/download/1.0.0/bamcount_static) for x86_64 linux systems.
 
-* [htslib](http://www.htslib.org)
-    * See `get_htslib.sh` for a script that gets a recent version and compiles it with minimal dependencies
-* [libBigWig](https://github.com/dpryan79/libBigWig)
-    * See `get_libBigWig.sh` for a script that gets a recent version and compiles it
-* zlib static library [only if building a static binary]
-    * See `get_zlib.sh` for a script that gets a recent version and compiles the static library
-
-## Compiling
-
-From root directory:
-
-```
-mkdir -p build && cd build && cmake .. && make
-```
+If that doesn't work, the build instructions are at the end of this README.
 
 ## Usage
 
+### BAM processing
 ```
 bamcount /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
 ```
@@ -28,10 +16,26 @@ bamcount /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 
 ```
-bamcount ./SRR1258218.sorted.bam --threads 4 --no-head --coverage --bigwig SRR1258218 --auc SRR1258218 --min-unique-qual 10 --annotation ./exons.bed SRR1258218 --frag-dist SRR1258218 --alts SRR1258218
+bamcount SRR1258218.sorted.bam --threads 4 --no-head --coverage --bigwig SRR1258218 --auc SRR1258218 --min-unique-qual 10 --annotation exons.bed SRR1258218 --frag-dist SRR1258218 --alts SRR1258218
 ```
 
-## Subcommands
+### BigWig Processing
+```
+bamcount /path/to/bigwigfile --annotation <annotated_intervals.bed> <sample_name> --op <operation_over_annotated_intervals>
+```
+
+Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
+```
+bamcount SRR1258218.bw --annotation exons.bed SRR1258218 --op mean
+```
+
+Of if you only want the AUC for the whole BigWig:
+```
+bamcount SRR1258218.bw --AUC SRR1258218
+```
+
+
+## BAM Processing Subcommands
 
 For any and all subcommands below, if run together, `bamcount` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
@@ -201,3 +205,20 @@ If you get a core dump when running on longer reads (e.g. BAM's produced by PacB
 then try adding the argument `--long-reads` as it will enlarge the buffer used to store the output junction string.
 
 This enables bamcount to have a better chance of handling really long CIGAR strings.
+
+## Build dependencies
+
+* [htslib](http://www.htslib.org)
+    * See `get_htslib.sh` for a script that gets a recent version and compiles it with minimal dependencies
+* [libBigWig](https://github.com/dpryan79/libBigWig)
+    * See `get_libBigWig.sh` for a script that gets a recent version and compiles it
+* zlib static library [only if building a static binary]
+    * See `get_zlib.sh` for a script that gets a recent version and compiles the static library
+
+## Compiling
+
+From root directory:
+
+```
+mkdir -p build && cd build && cmake .. && make
+```
