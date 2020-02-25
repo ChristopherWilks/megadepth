@@ -1376,7 +1376,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
     if(is_bw_list_file || bwIsBigWig(strdup(bam_arg), nullptr))
     {
         std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
-        //just do all/total AUC if --just-auc is passed in or if no options are passed in
+        //just do all/total AUC if no options are passed in
         if(argc == 1) {
             //should be the same as "all_auc" except support possibility of continuous values
             //in the BigWig (but not in the BAM, since we control how we count)
@@ -1477,7 +1477,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     uint64_t unique_auc = 0;
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
-    bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
     bool unique = has_option(argv, argv+argc, "--min-unique-qual");
     FILE* uafp = nullptr;
     if(unique) {
@@ -1499,6 +1498,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     hts_set_threads(bam_fh, nthreads);
     
+    bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
     FILE* auc_file = nullptr;
     if(has_option(argv, argv+argc, "--auc")) {
         const char *prefix = *get_option(argv, argv+argc, "--auc");
