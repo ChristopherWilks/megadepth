@@ -31,7 +31,7 @@ bamcount SRR1258218.bw --annotation exons.bed SRR1258218 --op mean
 
 Of if you only want the AUC for the whole BigWig:
 ```
-bamcount SRR1258218.bw --AUC SRR1258218
+bamcount SRR1258218.bw
 ```
 
 
