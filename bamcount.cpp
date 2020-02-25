@@ -86,15 +86,14 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       This is only applicable if --annotation is used for either BAM or BigWig input.\n"
     "\n"
     "Extract regions and their counts from a BigWig outputting BED format if a BigWig file is detected as input (exclusive of the other BAM modes):\n"
-    "                       Extracts all reads from the passed in BigWig and output as BED format and output to STDOUT,\n"
-    "                       this will also report total AUC to STDERR,\n"
-    "                       if --just-auc is also passed in, it will *only* report total AUC\n"
-    "  --annotation <bed> <prefix>     Only output the regions in this BED\n"
+    "                       Extracts all reads from the passed in BigWig and output as BED format.\n"
+    "                       This will also report the AUC over the annotated regions to STDOUT, unless --op raw is also passed in.\n"
+    "                       If only the name of the BigWig file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
+    "  --annotation <bed> <prefix>     Only output the regions in this BED applying the argument to --op to them.\n"
     "                                  Uses prefix to name the BED file to output to (similar to BAM processing)\n"
     "  --op <raw, sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
     "                                               \"raw\" will simply output the original intervals and their values\n"
     "                                               from the BigWig which overlap with the regions in --annotation\n"
-    "  --just-auc           Only report AUC across BigWig, nothing else\n"
     "\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
     "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
@@ -1332,12 +1331,14 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         //if we wanted to keep the chromosome order of the annotation output matching the input BED file
         if(keep_order_idx == 2)
             output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op, &store_local);
-        else
+        else if(op != craw)
             output_missing_annotations(annotations, &annotation_chrs_seen, afp, op = op);
         if(afp)
             fclose(afp);
         //fprintf(aucfp, "AUC\t%" PRIu64 "\n", annotated_auc);
-        fprintf(errfp, "AUC\t%.3f\n", annotated_auc);
+        if(op != craw)
+            fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\t%s\n", annotated_auc, bwfn);
+        //fprintf(errfp, "AUC\t%.3f\n", annotated_auc);
         fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
         fclose(errfp);
         //fclose(aucfp);
@@ -1366,198 +1367,125 @@ typedef std::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go(int argc, const char** argv, Op op) {
-    const char *bam_arg = get_positional_n(argv, argv+argc, 0);
-    if(!bam_arg) {
-        std::cerr << "ERROR: Could not find <bam|bw> positional arg" << std::endl;
-        return 1;
-    }
-    std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
+int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, std::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order) {
+    //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
+    int err = 0;
+    bool LOAD_BALANCE = false;
+    int slen = strlen(bam_arg);
+    bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
+    if(is_bw_list_file || bwIsBigWig(strdup(bam_arg), nullptr))
+    {
+        std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
+        //just do all/total AUC if --just-auc is passed in or if no options are passed in
+        if(argc == 1) {
+            //should be the same as "all_auc" except support possibility of continuous values
+            //in the BigWig (but not in the BAM, since we control how we count)
+            double total_auc = 0.0;
+            int ret = process_bigwig_for_total_auc(bam_arg, &total_auc);
+            if(ret == 0)
+                fprintf(stdout, "AUC_ALL_BASES\t%.3f\n", total_auc);
+            return ret;
+        }
 
-    htsFile *bam_fh = sam_open(bam_arg, "r");
-    if(!bam_fh) {
-        std::cerr << "ERROR: Could not open " << bam_arg << ": "
-                  << std::strerror(errno) << std::endl;
+        double annotated_total_auc = 0.0;
+        //process bigwig for annotation/auc
+        int keep_order_idx = keep_order?2:-1;
+        //TODO: look into implemention multithreaded mode for single BigWig processing (maybe per chromosome?)
+        if(is_bw_list_file) {
+            strvec* files_per_thread[nthreads];
+            uint64_t bytes_per_thread[nthreads];
+            for(int i=0; i < nthreads; i++) {
+                files_per_thread[i] = new strvec();
+                bytes_per_thread[i] = 0;
+            }
+            FILE* bw_list_fp = fopen(bam_arg, "r");
+            char* bwfn = new char[LINE_BUFFER_LENGTH];
+            size_t length = LINE_BUFFER_LENGTH;
+            ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
+            int file_idx = 0;
+            struct stat fstat;
+            mate2len file2size;
+            strvec files;
+            std::vector<uint64_t> fsizes;
+            uint64_t total_fsize = 0;
+            uint32_t num_files = 0;
+            while(bytes_read != -1) {
+                bwfn[bytes_read-1]='\0';
+                int thread_i = file_idx++ % nthreads;
+                std::string str(strdup(bwfn));
+                files.push_back(str);
+                if(LOAD_BALANCE) {
+                    stat(bwfn, &fstat);
+                    fsizes.push_back(fstat.st_size);
+                    total_fsize += fstat.st_size;
+                }
+                num_files++;
+                bytes_read = getline(&bwfn, &length, bw_list_fp);
+            }
+            //now load balance between threads based on file size
+            uint64_t per_thread_size = total_fsize / nthreads;
+            int max_num_files_per_thread = num_files / nthreads;
+            int thread_i = 0;
+            int num_files_current_thread = 0;
+            for(int i=0; i < num_files; i++) {
+                if((LOAD_BALANCE && bytes_per_thread[thread_i] + fsizes[i] > per_thread_size) ||
+                    (num_files_current_thread >= max_num_files_per_thread) && thread_i+1 < nthreads) {
+                    thread_i++;
+                    num_files_current_thread = 0;
+                }
+                if(LOAD_BALANCE)
+                    bytes_per_thread[thread_i] += fsizes[i];
+                files_per_thread[thread_i]->push_back(files[i]);
+                num_files_current_thread++;
+            }
+            std::vector<std::thread> threads;
+            for(int i=0; i < nthreads; i++) {
+                    threads.push_back(std::thread(process_bigwig_worker<T>, std::ref(*(files_per_thread[i])), annotations, chrm_order, keep_order_idx, op=op));
+            }
+            delete(bwfn);
+            for(int i=0; i < threads.size(); i++)
+                threads[i].join();
+            fclose(bw_list_fp);
+            if(afp)
+                fclose(afp);
+            return 0; 
+        }
+        //don't have a list of BigWigs, so just process the single one
+        int ret = process_bigwig(bam_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
+        //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+        if(keep_order)
+            output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
+        else if(op != craw)
+            output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
+        if(afp)
+            fclose(afp);
+        if(ret == 0 && op != craw)
+            fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
+        return ret;
+    }
+    else
+    {
+        std::cerr << "ERROR: Input file is not a BAM (.bam)/BigWig (.bw)/BigWig list file (.txt) " << bam_arg << std::endl;
         return 1;
     }
-    //number of bam decompression threads
-    //0 == 1 thread for the whole program, i.e.
-    //decompression shares a single core with processing
-    //This can also indicate the number of parallel threads to process a list of BigWigs for
-    //the purpose of summing over a passed in annotation
-    int nthreads = 0;
-    if(has_option(argv, argv+argc, "--threads")) {
-        const char** nthreads_ = get_option(argv, argv+argc, "--threads");
-        nthreads = atoi(*nthreads_);
-    }
-    bool keep_order = !has_option(argv, argv+argc, "--keep-order");
+}
+
+template <typename T>
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, std::unordered_map<std::string, bool>* annotation_chrs_seen, const char* annot_prefix, bool sum_annotation, strlist* chrm_order) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
-    bool has_annotation = has_option(argv, argv+argc, "--annotation");
     bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
-    FILE* auc_file = nullptr;
-    if(has_option(argv, argv+argc, "--auc")) {
-        const char *prefix = *get_option(argv, argv+argc, "--auc");
-        char afn[1024];
-        sprintf(afn, "%s.auc.tsv", prefix);
-        auc_file = fopen(afn, "w");
-        if(!has_annotation)
-            just_auc = true;
-    }
     bool unique = has_option(argv, argv+argc, "--min-unique-qual");
-    strlist chrm_order;
-    FILE* afp = nullptr;
     FILE* uafp = nullptr;
-    annotation_map_t<T> annotations; 
-    //if(op == cmean)
-    //    annotation_map_t<double> annotations;
-    bool sum_annotation = false;
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
-    //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
-    //maps chromosome to vector of uint arrays storing start/end of annotated intervals
-    int err = 0;
-    if(has_annotation) {
-        sum_annotation = true;
-        const char* afile = *(get_option(argv, argv+argc, "--annotation"));
-        if(!afile) {
-            std::cerr << "No argument to --annotation" << std::endl;
-            return 1;
-        }
-        const char* prefix = *(get_option(argv, argv+argc, "--annotation", 1));
-        if(!prefix) {
-            std::cerr << "No argument to --annotation" << std::endl;
-            return 1;
-        }
-        afp = fopen(afile, "r");
-        err = read_annotation(afp, &annotations, &chrm_order, keep_order);
-        fclose(afp);
-        afp = nullptr;
-        if(!just_auc) {
-            char afn[1024];
-            sprintf(afn, "%s.all.tsv", prefix);
-            afp = fopen(afn, "w");
-            if(unique) {
-                sprintf(afn, "%s.unique.tsv", prefix);
-                uafp = fopen(afn, "w");
-            }
-        }
-        assert(!annotations.empty());
-        std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+    if(unique) {
+        char afn[1024];
+        sprintf(afn, "%s.unique.tsv", annot_prefix);
+        uafp = fopen(afn, "w");
     }
-    assert(err == 0);
-    err = 0;
-    bool LOAD_BALANCE = false;
-    const htsFormat* format = hts_get_format(bam_fh);
-    const char* hts_format_ex = hts_format_file_extension(format);
-    if(strcmp(hts_format_ex, "bam") != 0)
-    {
-        int slen = strlen(bam_arg);
-        bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
-        if(is_bw_list_file || bwIsBigWig(strdup(bam_arg), nullptr))
-        {
-            std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"" << std::endl;
-            //just do all/total AUC if --just-auc is passed in
-            if(just_auc) {
-                //should be the same as "all_auc" except support possibility of continuous values
-                //in the BigWig (but not in the BAM, since we control how we count)
-                double total_auc = 0.0;
-                int ret = process_bigwig_for_total_auc(bam_arg, &total_auc);
-                if(ret == 0)
-                    fprintf(stderr, "AUC_ALL_READS_ALL_BASES\t%.3f\n", total_auc);
-                return ret;
-            }
 
-            double annotated_total_auc = 0.0;
-            //process bigwig for annotation/auc
-            int keep_order_idx = keep_order?2:-1;
-            //TODO: look into implemention multithreaded mode for single BigWig processing (maybe per chromosome?)
-            if(is_bw_list_file) {
-                strvec* files_per_thread[nthreads];
-                uint64_t bytes_per_thread[nthreads];
-                for(int i=0; i < nthreads; i++) {
-                    files_per_thread[i] = new strvec();
-                    bytes_per_thread[i] = 0;
-                }
-                FILE* bw_list_fp = fopen(bam_arg, "r");
-                char* bwfn = new char[LINE_BUFFER_LENGTH];
-                size_t length = LINE_BUFFER_LENGTH;
-                ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
-                int file_idx = 0;
-                struct stat fstat;
-                mate2len file2size;
-                strvec files;
-                std::vector<uint64_t> fsizes;
-                uint64_t total_fsize = 0;
-                uint32_t num_files = 0;
-                while(bytes_read != -1) {
-                    bwfn[bytes_read-1]='\0';
-                    int thread_i = file_idx++ % nthreads;
-                    std::string str(strdup(bwfn));
-                    files.push_back(str);
-                    if(LOAD_BALANCE) {
-                        stat(bwfn, &fstat);
-                        fsizes.push_back(fstat.st_size);
-                        total_fsize += fstat.st_size;
-                    }
-                    num_files++;
-                    bytes_read = getline(&bwfn, &length, bw_list_fp);
-                }
-                //now load balance between threads based on file size
-                uint64_t per_thread_size = total_fsize / nthreads;
-                int max_num_files_per_thread = num_files / nthreads;
-                int thread_i = 0;
-                int num_files_current_thread = 0;
-                for(int i=0; i < num_files; i++) {
-                    if((LOAD_BALANCE && bytes_per_thread[thread_i] + fsizes[i] > per_thread_size) ||
-                        (num_files_current_thread >= max_num_files_per_thread) && thread_i+1 < nthreads) {
-                        thread_i++;
-                        num_files_current_thread = 0;
-                    }
-                    if(LOAD_BALANCE)
-                        bytes_per_thread[thread_i] += fsizes[i];
-                    files_per_thread[thread_i]->push_back(files[i]);
-                    num_files_current_thread++;
-                }
-                std::vector<std::thread> threads;
-                for(int i=0; i < nthreads; i++) {
-                        threads.push_back(std::thread(process_bigwig_worker<T>, std::ref(*(files_per_thread[i])), &annotations, &chrm_order, keep_order_idx, op=op));
-                    /*if(op == cmean)
-                        threads.push_back(std::thread(process_bigwig_worker<double>, std::ref(*(files_per_thread[i])), &annotations, &chrm_order, keep_order_idx, op=op));
-                    else
-                        threads.push_back(std::thread(process_bigwig_worker<long>, std::ref(*(files_per_thread[i])), &annotations, &chrm_order, keep_order_idx, op=op));*/
-                }
-                delete(bwfn);
-                for(int i=0; i < threads.size(); i++)
-                    threads[i].join();
-                fclose(bw_list_fp);
-                if(afp)
-                    fclose(afp);
-                if(auc_file)
-                    fclose(auc_file);
-                return 0; 
-            }
-            //don't have a list of BigWigs, so just process the single one
-            int ret = process_bigwig(bam_arg, &annotated_total_auc, &annotations, &annotation_chrs_seen, afp, keep_order_idx, op=op);
-            //if we wanted to keep the chromosome order of the annotation output matching the input BED file
-            if(keep_order)
-                output_all_coverage_ordered_by_BED(&chrm_order, &annotations, afp, nullptr, op);
-            else
-                output_missing_annotations(&annotations, &annotation_chrs_seen, afp, op = op);
-            if(afp)
-                fclose(afp);
-            if(ret == 0)
-                fprintf(stderr, "AUC_ALL_READS_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
-            return ret;
-        }
-        else
-        {
-            std::cerr << "ERROR: Input file is not a BAM (.bam)/BigWig (.bw)/BigWig list file (.txt) " << bam_arg << std::endl;
-            return 1;
-        }
-    }
     std::cerr << "Processing BAM: \"" << bam_arg << "\"" << std::endl;
 
     bam_hdr_t *hdr = sam_hdr_read(bam_fh);
@@ -1570,6 +1498,16 @@ int go(int argc, const char** argv, Op op) {
         print_header(hdr);
     }
     hts_set_threads(bam_fh, nthreads);
+    
+    FILE* auc_file = nullptr;
+    if(has_option(argv, argv+argc, "--auc")) {
+        const char *prefix = *get_option(argv, argv+argc, "--auc");
+        char afn[1024];
+        sprintf(afn, "%s.auc.tsv", prefix);
+        auc_file = fopen(afn, "w");
+        if(!has_annotation)
+            just_auc = true;
+    }
     
     //setup list of callbacks for the process_cigar()
     //this is so we only have to walk the cigar for each alignment ~1 time
@@ -1757,14 +1695,14 @@ int go(int argc, const char** argv, Op op) {
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
-                        if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                        if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
+                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
                             if(unique) {
                                 keep_order_idx = keep_order?3:-1;
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                             }
                             if(!keep_order)
-                                annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+                                (*annotation_chrs_seen)[strdup(hdr->target_name[ptid])] = true;
                         }
                     }
                     reset_array(coverages, chr_size);
@@ -1972,35 +1910,19 @@ int go(int argc, const char** argv, Op op) {
                 sprintf(prefix, "ucov\t%d", ptid);
                 unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
             }
-            if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
+            if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
                 int keep_order_idx = keep_order?2:-1;
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
                 if(unique) {
                     keep_order_idx = keep_order?3:-1;
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                 }
                 if(!keep_order)
-                    annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
+                    (*annotation_chrs_seen)[strdup(hdr->target_name[ptid])] = true;
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
-            if(keep_order) {
-                output_all_coverage_ordered_by_BED(&chrm_order, &annotations, afp, uafp);
-                /*for(auto const c : chrm_order) {
-                    if(!c)
-                        continue;
-                    std::vector<T*>* annotations_for_chr = annotations[c];
-                    for(long z = 0; z < annotations_for_chr->size(); z++) {
-                        T start = (*annotations_for_chr)[z][0];
-                        T end = (*annotations_for_chr)[z][1];
-                        T sum = (*annotations_for_chr)[z][2];
-                        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
-                        if(unique) {
-                            sum = (*annotations_for_chr)[z][3];
-                            fprintf(uafp, "%s\t%lu\t%lu\t%lu\n", c, start, end, sum);
-                        }
-                    }
-                }*/
-            }
+            if(keep_order)
+                output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, uafp);
         }
         if(sum_annotation && auc_file) {
             fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
@@ -2011,9 +1933,9 @@ int go(int argc, const char** argv, Op op) {
         if(unique)
             delete[] unique_coverages;
         if(sum_annotation && !keep_order) {
-            output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
+            output_missing_annotations(annotations, annotation_chrs_seen, afp);
             if(unique)
-                output_missing_annotations(&annotations, &annotation_chrs_seen, uafp);
+                output_missing_annotations(annotations, annotation_chrs_seen, uafp);
         }
         if(auc_file) {
             fprintf(auc_file, "ALL_READS_ALL_BASES\t%" PRIu64 "\n", all_auc);
@@ -2068,6 +1990,59 @@ int go(int argc, const char** argv, Op op) {
     return 0;
 }
 
+template <typename T>
+int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, bool is_bam) {
+    //number of bam decompression threads
+    //0 == 1 thread for the whole program, i.e.
+    //decompression shares a single core with processing
+    //This can also indicate the number of parallel threads to process a list of BigWigs for
+    //the purpose of summing over a passed in annotation
+    int nthreads = 0;
+    if(has_option(argv, argv+argc, "--threads")) {
+        const char** nthreads_ = get_option(argv, argv+argc, "--threads");
+        nthreads = atoi(*nthreads_);
+    }
+    bool keep_order = !has_option(argv, argv+argc, "--keep-order");
+    strlist chrm_order;
+    FILE* afp = nullptr;
+    annotation_map_t<T> annotations; 
+    bool sum_annotation = false;
+    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
+    //maps chromosome to vector of uint arrays storing start/end of annotated intervals
+    int err = 0;
+    bool has_annotation = has_option(argv, argv+argc, "--annotation");
+    const char* prefix = nullptr;
+    if(has_annotation) {
+        sum_annotation = true;
+        const char* afile = *(get_option(argv, argv+argc, "--annotation"));
+        if(!afile) {
+            std::cerr << "No argument to --annotation" << std::endl;
+            return 1;
+        }
+        prefix = *(get_option(argv, argv+argc, "--annotation", 1));
+        if(!prefix) {
+            std::cerr << "No argument to --annotation" << std::endl;
+            return 1;
+        }
+        afp = fopen(afile, "r");
+        err = read_annotation(afp, &annotations, &chrm_order, keep_order);
+        fclose(afp);
+        afp = nullptr;
+
+        char afn[1024];
+        sprintf(afn, "%s.all.tsv", prefix);
+        afp = fopen(afn, "w");
+        assert(!annotations.empty());
+        std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+    }
+    assert(err == 0);
+    if(is_bam)
+        return go_bam(bam_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order);
+    else
+        return go_bw(bam_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order);
+}
+
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
     if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
@@ -2079,14 +2054,32 @@ int main(int argc, const char** argv) {
         print_version();
         return 0;
     }
-    std::ios::sync_with_stdio(false);
+    const char *bam_arg = get_positional_n(argv, argv+argc, 0);
+    if(!bam_arg) {
+        std::cerr << "ERROR: Could not find <bam|bw> positional arg" << std::endl;
+        return 1;
+    }
+    //std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
+
+    htsFile *bam_fh = sam_open(bam_arg, "r");
+    if(!bam_fh) {
+        std::cerr << "ERROR: Could not open " << bam_arg << ": "
+                  << std::strerror(errno) << std::endl;
+        return 1;
+    }
+    const htsFormat* format = hts_get_format(bam_fh);
+    const char* hts_format_ex = hts_format_file_extension(format);
+    bool is_bam = true;
+    if(strcmp(hts_format_ex, "bam") != 0)
+        is_bam = false;
     Op op = csum;
     if(has_option(argv, argv+argc, "--op")) {
         const char* opstr = *(get_option(argv, argv+argc, "--op"));
         op = get_operation(opstr);
     }
-    if(op == cmean)
-        return go<double>(argc, argv, op);
+    std::ios::sync_with_stdio(false);
+    if(!is_bam || op == cmean)
+        return go<double>(bam_arg, argc, argv, op, bam_fh, is_bam);
     else
-        return go<long>(argc, argv, op);
+        return go<long>(bam_arg, argc, argv, op, bam_fh, is_bam);
 }
