@@ -24,12 +24,12 @@ bamcount SRR1258218.sorted.bam --threads 4 --no-head --coverage --bigwig SRR1258
 bamcount /path/to/bigwigfile --annotation <annotated_intervals.bed> <sample_name> --op <operation_over_annotated_intervals>
 ```
 
-Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
+Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq), this will produce 1) means for the intervals listed in `exons.bed` and 2) the total annotated AUC (output `STDOUT`):
 ```
 bamcount SRR1258218.bw --annotation exons.bed SRR1258218 --op mean
 ```
 
-Of if you only want the AUC for the whole BigWig:
+Or if you only want the AUC for the whole BigWig:
 ```
 bamcount SRR1258218.bw
 ```
