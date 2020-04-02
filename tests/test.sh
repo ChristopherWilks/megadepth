@@ -56,3 +56,6 @@ diff tests/test3.auc.out.tsv test3.auc.tsv
 #long reads support for junctions
 ./bcd_runner tests/long_reads.bam --junctions long_reads.bam --long-reads
 diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
+
+#clean up
+rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
