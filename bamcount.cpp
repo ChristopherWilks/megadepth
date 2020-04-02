@@ -87,13 +87,11 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "BigWig Input:\n"
     "Extract regions and their counts from a BigWig outputting BED format if a BigWig file is detected as input (exclusive of the other BAM modes):\n"
     "                       Extracts all reads from the passed in BigWig and output as BED format.\n"
-    "                       This will also report the AUC over the annotated regions to STDOUT, unless --op raw is also passed in.\n"
+    "                       This will also report the AUC over the annotated regions to STDOUT.\n"
     "                       If only the name of the BigWig file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
     "  --annotation <bed> <prefix>     Only output the regions in this BED applying the argument to --op to them.\n"
     "                                  Uses prefix to name the BED file to output to (similar to BAM processing)\n"
-    "  --op <raw, sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
-    "                                               \"raw\" will simply output the original intervals and their values\n"
-    "                                               from the BigWig which overlap with the regions in --annotation\n"
+    "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
     "\n"
     "\n"
     "BAM Input:\n"
@@ -1056,7 +1054,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 
 
 typedef std::unordered_map<std::string, bool> chr2bool;
-enum Op { craw, csum, cmean, cmin, cmax };
+enum Op { csum, cmean, cmin, cmax };
 typedef std::unordered_map<std::string, int> str2op;
 template <typename T>
 static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
@@ -1077,7 +1075,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
     blocksPerIteration = 4000000;
     //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
-    //raw mode we only want to process BW intervals once
+    //for certain modes we only want to process BW intervals once
     std::vector<bool> intervals_seen(STARTING_NUM_INTERVALS,false);
     //loop through all the chromosomes in the BW
     for(tid = 0; tid < fp->cl->nKeys; tid++)
@@ -1139,35 +1137,22 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     if(start >= istart && start < iend)
                     {
                         long last_k = end > iend ? iend : end;
-                        //raw mode
-                        if(op == craw) {
-                            k = iend;
-                            //only want to output intervals once
-                            if(intervals_seen[j])
-                                continue;
-                            intervals_seen[j] = true;
-                            //don't try to keep order, just output the intervals as they are in the bigwig
-                            fprintf(afp, "%s\t%u\t%u\t%.3f\n", fp->cl->chrom[tid], istart, iend, iter->intervals->value[j]);
-                            continue;
-                        }
                         //stat mode
-                        else {
-                            //avoid having if's in the inner loops as much as possible
-                            switch(op) {
-                                case csum:
-                                case cmean:
-                                    for(k = start; k < last_k; k++)
-                                        sum += iter->intervals->value[j];
-                                    break;
-                                case cmin:
-                                    for(k = start; k < last_k; k++) 
-                                        min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
-                                    break;
-                                case cmax:
-                                    for(k = start; k < last_k; k++) 
-                                        max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
-                                    break;
-                            }
+                        //avoid having if's in the inner loops as much as possible
+                        switch(op) {
+                            case csum:
+                            case cmean:
+                                for(k = start; k < last_k; k++)
+                                    sum += iter->intervals->value[j];
+                                break;
+                            case cmin:
+                                for(k = start; k < last_k; k++) 
+                                    min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
+                                break;
+                            case cmax:
+                                for(k = start; k < last_k; k++) 
+                                    max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
+                                break;
                         }
 
                         //move start up
@@ -1312,8 +1297,6 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         std::string str(bwfn_copy);
         split_string(str, '/', &tokens);
         char afn[1024];
-        /*sprintf(afn, "%s.auc.tsv", tokens.back().c_str());
-        FILE* aucfp = fopen(afn, "w");*/
         FILE* afp = nullptr;
         sprintf(afn, "%s.err", tokens.back().c_str());
         FILE* errfp = fopen(afn, "w");
@@ -1328,23 +1311,20 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
             if(afp)
                 fclose(afp);
             fclose(errfp);
-            //fclose(aucfp);
             return;
         }
         //if we wanted to keep the chromosome order of the annotation output matching the input BED file
         if(keep_order_idx == 2)
             output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op, &store_local);
-        else if(op != craw)
+        else
             output_missing_annotations(annotations, &annotation_chrs_seen, afp, op = op);
         if(afp)
             fclose(afp);
         //fprintf(aucfp, "AUC\t%" PRIu64 "\n", annotated_auc);
-        if(op != craw)
-            fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\t%s\n", annotated_auc, bwfn);
+        fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\t%s\n", annotated_auc, bwfn);
         //fprintf(errfp, "AUC\t%.3f\n", annotated_auc);
         fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
         fclose(errfp);
-        //fclose(aucfp);
         if(bwfn_copy)
             delete(bwfn_copy);
     }
@@ -1354,8 +1334,6 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
 }
 
 Op get_operation(const char* opstr) {
-    if(strcmp(opstr, "raw") == 0)
-        return craw;
     if(strcmp(opstr, "mean") == 0)
         return cmean;
     if(strcmp(opstr, "min") == 0)
@@ -1458,11 +1436,11 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         //if we wanted to keep the chromosome order of the annotation output matching the input BED file
         if(keep_order)
             output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
-        else if(op != craw)
+        else
             output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
         if(afp)
             fclose(afp);
-        if(ret == 0 && op != craw)
+        if(ret == 0)
             fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
         return ret;
     }
