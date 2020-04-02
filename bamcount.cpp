@@ -119,20 +119,32 @@ int go(const char* bam_arg, int argc, const char** argv, htsFile *bam_fh, bool i
                   << ": " << std::strerror(errno) << std::endl;
         return 1;
     }
-    char** regions = new char*[nthreads];
-    regions[0] = new char[50];
+    char** regions = new char*[hdr->n_targets];
+    for(int i = 0; i < hdr->n_targets; i++) {
+        regions[i] = new char[100];
+        sprintf(regions[i],"%s:1-%d",hdr->target_name[i],hdr->target_len[i]);
+    }
+        
+    /*regions[0] = new char[50];
     regions[0] = "chr1:1-260000000";
     regions[1] = new char[50];
     regions[1] = "chr2:1-260000000";
     regions[2] = new char[50];
     regions[2] = "chr3:1-260000000";
     regions[3] = new char[50];
-    regions[3] = "chr4:1-260000000";
+    regions[3] = "chr4:1-260000000";*/
     std::vector<std::thread> threads;
-    for(int i=0; i < nthreads; i++) 
-            threads.push_back(std::thread(process_bam_worker, i, std::ref(bam_arg), std::ref(regions[i])));
-    for(int i=0; i < threads.size(); i++)
-        threads[i].join();
+    int offset = 0;
+    int j = 0;
+    while(j < hdr->n_targets) {
+        for(int i=0; i < nthreads && j+i < hdr->n_targets; i++)
+            threads.push_back(std::thread(process_bam_worker, i, std::ref(bam_arg), std::ref(regions[j+i])));
+        int z = threads.size();
+        for(int i=0; i < z; i++)
+            threads[i].join();
+        threads.clear();
+        j += z;
+    }
     uint64_t recs = 0;
     fprintf(stdout,"Parent read %lu records\n",recs);
     return 0;
