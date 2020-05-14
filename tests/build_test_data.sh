@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-export LD_LIBRARY_PATH=/data7/bamcount/libBigWig:/data7/bamcount/htslib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/data7/megadepth/libBigWig:/data7/megadepth/htslib:$LD_LIBRARY_PATH
 MD=../mosdepth
 BT=~/bwtool_mine2/bwtool
 B2B='python3 ../bam2bigwig.py'
 KB2B=/data/kent_tools/bigWigToBedGraph
 WT=wiggletools
-EXONS=/data7/bamcount/exons.bed
+EXONS=/data7/megadepth/exons.bed
 
 EXONS=$1
 BAM=$2

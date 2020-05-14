@@ -65,14 +65,14 @@ static double SOFTCLIP_POLYA_TOTAL_COUNT_MIN=3;
 static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 
 static const void print_version() {
-    //fprintf(stderr, "bamcount %s\n", string(BAMCOUNT_VERSION).c_str());
-    std::cout << "bamcount " << std::string(BAMCOUNT_VERSION) << std::endl;
+    //fprintf(stderr, "megadepth %s\n", string(MEGADEPTH_VERSION).c_str());
+    std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
 }
 
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Usage:\n"
-    "  bamcount <bam|bw|-> [options]\n"
+    "  megadepth <bam|bw|-> [options]\n"
     "\n"
     "Options:\n"
     "  -h --help            Show this screen.\n"

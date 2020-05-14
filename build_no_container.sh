@@ -4,7 +4,7 @@ set -e
 
 #build dynamic by default
 build_type=$1
-bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "bamcount_static"; } else { print "bamcount_dynamic"; }'`
+bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth_dynamic"; }'`
 
 if [[ ! -s zlib ]] ; then
     ./get_zlib.sh
@@ -29,8 +29,8 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}
 popd
 cp ${DR}/${bc} ./
-ln -fs ./$bc bamcount
-./bamcount --version
+ln -fs ./$bc megadepth
+./megadepth --version
 rm -rf ${DR}
 
 DR=build-debug-temp
@@ -40,6 +40,6 @@ cmake -DCMAKE_BUILD_TYPE=Debug ..
 make ${bc}
 popd
 cp ${DR}/${bc} ./${bc}_debug
-ln -fs ./${bc}_debug bamcount_debug
-./bamcount_debug --version
+ln -fs ./${bc}_debug megadepth_debug
+./megadepth_debug --version
 rm -rf ${DR}

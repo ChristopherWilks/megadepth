@@ -3,7 +3,7 @@
 set -e
 
 if [[ ! -d /code ]] ; then
-    echo "Must mount bamcount directory at /code inside container"
+    echo "Must mount megadepth directory at /code inside container"
 fi 
 cd /code
 
@@ -18,10 +18,10 @@ mkdir -p ${DR}
 pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make
-ldd -v bamcount
-./bamcount --help
+ldd -v megadepth
+./megadepth --help
 popd
-cp ${DR}/bamcount ./bamcount
+cp ${DR}/megadepth ./megadepth
 rm -rf ${DR}
 
 DR=build-debug-temp
@@ -29,11 +29,11 @@ mkdir -p ${DR}
 pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 make
-ldd -v bamcount
-./bamcount --help
+ldd -v megadepth
+./megadepth --help
 popd
-cp ${DR}/bamcount ./bamcount-debug
+cp ${DR}/megadepth ./megadepth-debug
 rm -rf ${DR}
 
-zip bamcount.zip bamcount bamcount-debug
-#rm -f bamcount bamcount-debug
+zip megadepth.zip megadepth megadepth-debug
+#rm -f megadepth megadepth-debug

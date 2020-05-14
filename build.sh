@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-docker build -t bamcount .
+docker build -t megadepth .
