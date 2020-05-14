@@ -4,6 +4,8 @@ BigWig and BAM related utilities.
 
 We strongly recommend use of the pre-compiled,  [statically compiled binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.0/megadepth_static) for x86_64 linux systems.
 
+[Releases prior to 1.0.2 used the previous name "bamcount"]
+
 If that doesn't work, the build instructions are at the end of this README.
 
 ## Usage
