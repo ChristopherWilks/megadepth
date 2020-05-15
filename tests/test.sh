@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -xe
 
 rm -f test.bam.auc.tsv test.bam.all.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv test.bam.softclip.tsv
 
@@ -58,4 +59,4 @@ diff tests/test3.auc.out.tsv test3.auc.tsv
 diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
 
 #clean up
-rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
+#rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
