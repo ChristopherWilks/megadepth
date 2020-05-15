@@ -1,5 +1,7 @@
 # megadepth
 
+![Build Status](https://github.com/ChristopherWilks/megadepth/.git/build.yml/badge.svg)
+
 BigWig and BAM related utilities.
 
 We strongly recommend use of the pre-compiled,  [statically compiled binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.2/megadepth_static) for x86_64 linux systems.
