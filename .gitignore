@@ -6,6 +6,8 @@ docopt
 .DS_Store
 bamcount
 bamcount-debug
+megadepth
+megadepth-debug
 attic
 htslib
 libBigWig
