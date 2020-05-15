@@ -1,4 +1,4 @@
-name: C/C++ CI
+name: build
 
 on:
   push:
@@ -24,4 +24,4 @@ jobs:
     - name: build
       run: /bin/bash -x ./build_no_container.sh
     - name: test
-      run: /bin/bash -x tests/test.sh
+      run: /bin/bash tests/test.sh
