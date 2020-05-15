@@ -1,6 +1,6 @@
 # megadepth
 
-![C/C++ CI](https://github.com/ChristopherWilks/megadepth/workflows/C/C++%20CI/badge.svg)
+![build](https://github.com/ChristopherWilks/megadepth/workflows/build/badge.svg)
 
 BigWig and BAM related utilities.
 
