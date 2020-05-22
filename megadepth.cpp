@@ -45,6 +45,14 @@
 #include <sys/stat.h>
 #include "bigWig.h"
 
+int UNKNOWN_FORMAT=-1;
+int BAM_FORMAT = 1;
+int BW_FORMAT = 2;
+
+//critical to use a high value here for remote BigWigs
+//accesses, has much less (maybe no) effect on local processing
+const uint32_t default_BW_READ_BUFFER = 1<<30;
+uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 
 typedef std::vector<std::string> strvec;
 typedef std::unordered_map<std::string, uint64_t> mate2len;
@@ -92,6 +100,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed> <prefix>     Only output the regions in this BED applying the argument to --op to them.\n"
     "                                  Uses prefix to name the BED file to output to (similar to BAM processing)\n"
     "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
+    "  --bwbuffer <1GB[default]>       Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
+    "                                   Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
     "\n"
     "BAM Input:\n"
@@ -493,6 +503,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 //used for buffering up text/gz output
 int OUT_BUFF_SZ=4000000;
 int COORD_STR_LEN=34;
+typedef std::unordered_map<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
                         const uint32_t* arr, 
@@ -1005,16 +1016,20 @@ void output_read_sequence_and_qualities(char* qname, int midx, uint8_t* seq, uin
 
 static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* errfp = stderr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
-    if(bwInit(1<<17) != 0) {
+    //this is the buffer
+    if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(errfp, "Error in bwInit, exiting\n");
-        return 1;
+        return -1;
     }
-    char* fn_copy = strdup(fn);
+    char* fn_copy = new char[1024];
+    strcpy(fn_copy, fn);
     bigWigFile_t *fp = bwOpen(fn_copy, NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
-        return 1;
+        return -1;
     }
+    fprintf(stdout,"opened %s, BW read buffer is %u\n",fn, BW_READ_BUFFER);
+    fflush(stdout);
     uint32_t i, tid, blocksPerIteration;
     //better to ask for a few blocks for better memory and time stats
     blocksPerIteration = 10;
@@ -1023,18 +1038,24 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
     //loop through all the chromosomes in the BW
     for(tid = 0; tid < fp->cl->nKeys; tid++)
     {
+        if(fp->cl->len[tid] < 1)
+            continue;
+        fprintf(stdout,"processing chromosome %s len:%d \n", fp->cl->chrom[tid], fp->cl->len[tid] );
         iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
+
         if(!iter->data)
         {
             fprintf(errfp, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
             continue;
         }
-        while(iter->data) {
+        while(iter->data)
+        {
             uint32_t num_intervals = iter->intervals->l;
             total_num_intervals+=num_intervals;
             uint32_t istart = 0;
             uint32_t iend = 0;
-            for(int j = 0; j < num_intervals; j++) {
+            for(int j = 0; j < num_intervals; j++)
+            {
                 istart = iter->intervals->start[j];
                 iend = iter->intervals->end[j];
                 double value = (iend-istart) * iter->intervals->value[j];
@@ -1059,15 +1080,15 @@ typedef std::unordered_map<std::string, int> str2op;
 template <typename T>
 static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
-    if(bwInit(1<<17) != 0) {
+    if(bwInit(1<<BW_READ_BUFFER) != 0) {
         fprintf(errfp, "Error in bwInit, exiting\n");
-        return 1;
+        return -1;
     }
     char* fn_copy = strdup(fn);
     bigWigFile_t *fp = bwOpen(fn_copy, NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
-        return 1;
+        return -1;
     }
     uint32_t i, tid, blocksPerIteration;
     //ask for huge # of blocks per chromosome to ensure we get all in one go
@@ -1354,101 +1375,95 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
     bool LOAD_BALANCE = false;
     int slen = strlen(bam_arg);
     bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
-    if(is_bw_list_file || bwIsBigWig(strdup(bam_arg), nullptr))
-    {
-        std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
-        //just do all/total AUC if no options are passed in
-        if(argc == 1) {
-            //should be the same as "all_auc" except support possibility of continuous values
-            //in the BigWig (but not in the BAM, since we control how we count)
-            double total_auc = 0.0;
-            int ret = process_bigwig_for_total_auc(bam_arg, &total_auc);
-            if(ret == 0)
-                fprintf(stdout, "AUC_ALL_BASES\t%.3f\n", total_auc);
-            return ret;
-        }
-
-        double annotated_total_auc = 0.0;
-        //process bigwig for annotation/auc
-        int keep_order_idx = keep_order?2:-1;
-        //TODO: look into implemention multithreaded mode for single BigWig processing (maybe per chromosome?)
-        if(is_bw_list_file) {
-            strvec* files_per_thread[nthreads];
-            uint64_t bytes_per_thread[nthreads];
-            for(int i=0; i < nthreads; i++) {
-                files_per_thread[i] = new strvec();
-                bytes_per_thread[i] = 0;
-            }
-            FILE* bw_list_fp = fopen(bam_arg, "r");
-            char* bwfn = new char[LINE_BUFFER_LENGTH];
-            size_t length = LINE_BUFFER_LENGTH;
-            ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
-            int file_idx = 0;
-            struct stat fstat;
-            mate2len file2size;
-            strvec files;
-            std::vector<uint64_t> fsizes;
-            uint64_t total_fsize = 0;
-            uint32_t num_files = 0;
-            while(bytes_read != -1) {
-                bwfn[bytes_read-1]='\0';
-                int thread_i = file_idx++ % nthreads;
-                std::string str(strdup(bwfn));
-                files.push_back(str);
-                if(LOAD_BALANCE) {
-                    stat(bwfn, &fstat);
-                    fsizes.push_back(fstat.st_size);
-                    total_fsize += fstat.st_size;
-                }
-                num_files++;
-                bytes_read = getline(&bwfn, &length, bw_list_fp);
-            }
-            //now load balance between threads based on file size
-            uint64_t per_thread_size = total_fsize / nthreads;
-            int max_num_files_per_thread = num_files / nthreads;
-            int thread_i = 0;
-            int num_files_current_thread = 0;
-            for(int i=0; i < num_files; i++) {
-                if((LOAD_BALANCE && bytes_per_thread[thread_i] + fsizes[i] > per_thread_size) ||
-                    (num_files_current_thread >= max_num_files_per_thread) && thread_i+1 < nthreads) {
-                    thread_i++;
-                    num_files_current_thread = 0;
-                }
-                if(LOAD_BALANCE)
-                    bytes_per_thread[thread_i] += fsizes[i];
-                files_per_thread[thread_i]->push_back(files[i]);
-                num_files_current_thread++;
-            }
-            std::vector<std::thread> threads;
-            for(int i=0; i < nthreads; i++) {
-                    threads.push_back(std::thread(process_bigwig_worker<T>, std::ref(*(files_per_thread[i])), annotations, chrm_order, keep_order_idx, op=op));
-            }
-            delete(bwfn);
-            for(int i=0; i < threads.size(); i++)
-                threads[i].join();
-            fclose(bw_list_fp);
-            if(afp)
-                fclose(afp);
-            return 0; 
-        }
-        //don't have a list of BigWigs, so just process the single one
-        int ret = process_bigwig(bam_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
-        //if we wanted to keep the chromosome order of the annotation output matching the input BED file
-        if(keep_order)
-            output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
-        else
-            output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
-        if(afp)
-            fclose(afp);
+    fprintf(stdout,"filename:%s\n",bam_arg);
+    std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
+    //just do all/total AUC if no options are passed in
+    if(argc == 1 || (argc == 3 && default_BW_READ_BUFFER != BW_READ_BUFFER)) {
+        fflush(stderr);
+        //should be the same as "all_auc" except support possibility of continuous values
+        //in the BigWig (but not in the BAM, since we control how we count)
+        double total_auc = 0.0;
+        int ret = process_bigwig_for_total_auc(bam_arg, &total_auc);
         if(ret == 0)
-            fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
+            fprintf(stdout, "AUC_ALL_BASES\t%.3f\n", total_auc);
         return ret;
     }
-    else
-    {
-        std::cerr << "ERROR: Input file is not a BAM (.bam)/BigWig (.bw)/BigWig list file (.txt) " << bam_arg << std::endl;
-        return 1;
+
+    double annotated_total_auc = 0.0;
+    //process bigwig for annotation/auc
+    int keep_order_idx = keep_order?2:-1;
+    //TODO: look into implemention multithreaded mode for single BigWig processing (maybe per chromosome?)
+    if(is_bw_list_file) {
+        strvec* files_per_thread[nthreads];
+        uint64_t bytes_per_thread[nthreads];
+        for(int i=0; i < nthreads; i++) {
+            files_per_thread[i] = new strvec();
+            bytes_per_thread[i] = 0;
+        }
+        FILE* bw_list_fp = fopen(bam_arg, "r");
+        char* bwfn = new char[LINE_BUFFER_LENGTH];
+        size_t length = LINE_BUFFER_LENGTH;
+        ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
+        int file_idx = 0;
+        struct stat fstat;
+        mate2len file2size;
+        strvec files;
+        std::vector<uint64_t> fsizes;
+        uint64_t total_fsize = 0;
+        uint32_t num_files = 0;
+        while(bytes_read != -1) {
+            bwfn[bytes_read-1]='\0';
+            int thread_i = file_idx++ % nthreads;
+            std::string str(strdup(bwfn));
+            files.push_back(str);
+            if(LOAD_BALANCE) {
+                stat(bwfn, &fstat);
+                fsizes.push_back(fstat.st_size);
+                total_fsize += fstat.st_size;
+            }
+            num_files++;
+            bytes_read = getline(&bwfn, &length, bw_list_fp);
+        }
+        //now load balance between threads based on file size
+        uint64_t per_thread_size = total_fsize / nthreads;
+        int max_num_files_per_thread = num_files / nthreads;
+        int thread_i = 0;
+        int num_files_current_thread = 0;
+        for(int i=0; i < num_files; i++) {
+            if((LOAD_BALANCE && bytes_per_thread[thread_i] + fsizes[i] > per_thread_size) ||
+                (num_files_current_thread >= max_num_files_per_thread) && thread_i+1 < nthreads) {
+                thread_i++;
+                num_files_current_thread = 0;
+            }
+            if(LOAD_BALANCE)
+                bytes_per_thread[thread_i] += fsizes[i];
+            files_per_thread[thread_i]->push_back(files[i]);
+            num_files_current_thread++;
+        }
+        std::vector<std::thread> threads;
+        for(int i=0; i < nthreads; i++) {
+                threads.push_back(std::thread(process_bigwig_worker<T>, std::ref(*(files_per_thread[i])), annotations, chrm_order, keep_order_idx, op=op));
+        }
+        delete(bwfn);
+        for(int i=0; i < threads.size(); i++)
+            threads[i].join();
+        fclose(bw_list_fp);
+        if(afp)
+            fclose(afp);
+        return 0; 
     }
+    //don't have a list of BigWigs, so just process the single one
+    int ret = process_bigwig(bam_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
+    //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+    if(keep_order)
+        output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
+    else
+        output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
+    if(afp)
+        fclose(afp);
+    if(ret == 0)
+        fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
+    return ret;
 }
 
 template <typename T>
@@ -1472,7 +1487,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(!hdr) {
         std::cerr << "ERROR: Could not read header for " << bam_arg
                   << ": " << std::strerror(errno) << std::endl;
-        return 1;
+        return -1;
     }
     if(!has_option(argv, argv+argc, "--no-head")) {
         print_header(hdr);
@@ -1531,7 +1546,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(!rec) {
         std::cerr << "ERROR: Could not initialize BAM object: "
                   << std::strerror(errno) << std::endl;
-        return 1;
+        return -1;
     }
     kstring_t sambuf{ 0, 0, nullptr };
     bool first = true;
@@ -1762,7 +1777,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 int ret = sam_format1(hdr, rec, &sambuf);
                 if(ret < 0) {
                     std::cerr << "Could not format SAM record: " << std::strerror(errno) << std::endl;
-                    return 1;
+                    return -1;
                 }
                 kstring_out(std::cout, &sambuf);
                 std::cout << '\n';
@@ -1999,12 +2014,12 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
         const char* afile = *(get_option(argv, argv+argc, "--annotation"));
         if(!afile) {
             std::cerr << "No argument to --annotation" << std::endl;
-            return 1;
+            return -1;
         }
         prefix = *(get_option(argv, argv+argc, "--annotation", 1));
         if(!prefix) {
             std::cerr << "No argument to --annotation" << std::endl;
-            return 1;
+            return -1;
         }
         afp = fopen(afile, "r");
         err = read_annotation(afp, &annotations, &chrm_order, keep_order);
@@ -2024,6 +2039,18 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
         return go_bw(bam_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order);
 }
 
+int get_file_format_extension(const char* fname) {
+    int slen = strlen(fname);
+    if(strcmp("bam", &(fname[slen-3])) == 0)
+        return BAM_FORMAT;
+    if(strcmp("bw", &(fname[slen-2])) == 0
+            || strcmp("bigwig", &(fname[slen-6])) == 0
+            || strcmp("bigWig", &(fname[slen-6])) == 0
+            || strcmp("BigWig", &(fname[slen-6])) == 0)
+        return BW_FORMAT;
+    return UNKNOWN_FORMAT;
+}
+
 int main(int argc, const char** argv) {
     argv++; argc--;  // skip binary name
     if(argc == 0 || has_option(argv, argv + argc, "--help") || has_option(argv, argv + argc, "--usage")) {
@@ -2035,24 +2062,34 @@ int main(int argc, const char** argv) {
         print_version();
         return 0;
     }
-    const char *bam_arg = get_positional_n(argv, argv+argc, 0);
-    if(!bam_arg) {
+    if(has_option(argv, argv+argc, "--bwbuffer")) {
+        const char* opstr = *(get_option(argv, argv+argc, "--bwbuffer"));
+        BW_READ_BUFFER = atol(opstr);
+    }
+    const char *fname_arg = get_positional_n(argv, argv+argc, 0);
+    if(!fname_arg) {
         std::cerr << "ERROR: Could not find <bam|bw> positional arg" << std::endl;
-        return 1;
+        return -1;
     }
-    //std::cerr << "Processing \"" << bam_arg << "\"" << std::endl;
 
-    htsFile *bam_fh = sam_open(bam_arg, "r");
-    if(!bam_fh) {
-        std::cerr << "ERROR: Could not open " << bam_arg << ": "
-                  << std::strerror(errno) << std::endl;
-        return 1;
+    int format_code = get_file_format_extension(fname_arg);
+    if(format_code == UNKNOWN_FORMAT) {
+        std::cerr << "ERROR: Could determine format of " << fname_arg << " exiting" << std::endl;
+        return -1;
     }
-    const htsFormat* format = hts_get_format(bam_fh);
-    const char* hts_format_ex = hts_format_file_extension(format);
-    bool is_bam = true;
-    if(strcmp(hts_format_ex, "bam") != 0)
-        is_bam = false;
+
+    bool is_bam = format_code == BAM_FORMAT;
+    htsFile* bam_fh = nullptr;
+    if(is_bam) {
+        bam_fh = sam_open(fname_arg, "r");
+        if(!bam_fh) {
+            std::cerr << "ERROR: Could not open " << fname_arg << ": "
+                      << std::strerror(errno) << std::endl;
+            return -1;
+        }
+        const htsFormat* format = hts_get_format(bam_fh);
+        const char* hts_format_ex = hts_format_file_extension(format);
+    }
     Op op = csum;
     if(has_option(argv, argv+argc, "--op")) {
         const char* opstr = *(get_option(argv, argv+argc, "--op"));
@@ -2060,7 +2097,7 @@ int main(int argc, const char** argv) {
     }
     std::ios::sync_with_stdio(false);
     if(!is_bam || op == cmean)
-        return go<double>(bam_arg, argc, argv, op, bam_fh, is_bam);
+        return go<double>(fname_arg, argc, argv, op, bam_fh, is_bam);
     else
-        return go<long>(bam_arg, argc, argv, op, bam_fh, is_bam);
+        return go<long>(fname_arg, argc, argv, op, bam_fh, is_bam);
 }

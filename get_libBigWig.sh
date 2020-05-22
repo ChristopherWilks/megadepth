@@ -2,7 +2,7 @@
 
 set -ex
 
-VER=0.4.2
+VER=0.4.4
 AR=${VER}.tar.gz
 FN=libBigWig-${AR}
 DIR=libBigWig-${VER}
