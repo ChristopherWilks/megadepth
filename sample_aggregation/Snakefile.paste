@@ -1,0 +1,148 @@
+#start
+import sys
+import os
+import glob
+
+#config params:
+#+) input=<directory_containing_per_sample_sums (format per file (tabs): chrm,start,end,sum)
+#+) staging=<directory_to_put_intermediate_files>
+#+) sample_ids_file=<file_with_studyID_sampleID_sampleID2_mappings>
+#optional:
+#+) existing_sums=<file_with_original_coordinates/annotations_in_SAME_ORDER_as_sums_files>
+#+) pigz_threads=<#_of_threads_to_use_for_final_pasted_file_compression>
+#+) prefix=<additional_type_prefix_for_files_paste>
+
+FILES=['%sall.samples.pasted.gz' % config['prefix']]
+
+main_script_path=os.path.join(workflow.basedir)
+
+SCRIPTS={'find':os.path.join(main_script_path,'find_new_files.sh'),'group':os.path.join(main_script_path,'group_sums.sh'),'paste':os.path.join(main_script_path,'paste_sums.sh')}
+
+#initial coords/annotations (e.g. exons.bed.w_header.gz in Monorail)
+if 'existing_sums' not in config:
+	config['existing_sums']=""
+
+#how many threads to allow pigz when doing the final single file compression
+if 'pigz_threads' not in config:
+	config['pigz_threads']=4
+
+wildcard_constraints:
+	study_group_num="[0-9a-zA-Z]{2}",
+	run_group_num="[0-9a-zA-Z]{2}",
+	#prefix example: 'dn.' (for APA sites) or empty string
+	type=config['prefix']+"all"
+
+rule all:
+	input:
+		expand("{file}", file=FILES)
+
+###exon SUM pasting rules
+rule find_sums:
+	input: 
+		config['input'],
+		config['sample_ids_file']
+	output:
+		config['staging'] + '/{type}.groups.manifest'
+	params:
+		staging=config['staging'],
+		script_path=SCRIPTS['find'],
+		type=lambda wildcards: wildcards.type
+	shell:
+		"{params.script_path} {input[0]} {input[1]} {params.staging} {params.type} .tsv"
+
+rule group_sums:
+	input:
+		config['staging'] + '/{type}.groups.manifest'
+	output:
+		config['staging'] + '/{type}.{study_group_num}.{run_group_num}.grouped'
+	params:
+		study_group_num=lambda wildcards: wildcards.study_group_num,
+		run_group_num=lambda wildcards: wildcards.run_group_num,
+		staging=config['staging'],
+		script_path=SCRIPTS['group'],
+		type=lambda wildcards: wildcards.type
+	shell:
+		"{params.script_path} {params.staging}/{params.type}.{params.study_group_num}.{params.run_group_num}.manifest {output}"
+
+#do a rule instantiation per *run* low-order name grouping to do hierarchical pastes
+rule paste_sums_per_group:
+	input:
+		config['staging'] + '/{type}.{study_group_num}.{run_group_num}.grouped'
+	output:
+		config['staging'] + '/{type}.{study_group_num}.{run_group_num}.pasted'
+	params:
+		study_group_num=lambda wildcards: wildcards.study_group_num,
+		run_group_num=lambda wildcards: wildcards.run_group_num,
+		staging=config['staging'],
+		script_path=SCRIPTS['paste'],
+		type=lambda wildcards: wildcards.type,
+		pigz_threads=0
+	shell:
+		"{params.script_path} {params.staging}/{params.type}.{params.study_group_num}.{params.run_group_num}.manifest {output} {params.pigz_threads}"
+
+def get_pasted_sum_files(wildcards):
+	study_loworder = wildcards.study_group_num
+	fin = open(config['sample_ids_file'], "r")
+	lines = fin.read().split('\n')
+	fin.close()
+	return [config['staging']+"/%s.%s.%s.pasted" % (wildcards.type, f.split('\t')[0][-2:], f.split('\t')[1][-2:]) for f in lines[:-1]]
+	#return [config['staging']+"/%s.%s.%s.pasted" % (wildcards.type, f.split('/')[-3], f.split('/')[-1]) for f in glob.glob(config['input']+'/%s/*??' % (study_loworder))]
+
+rule collect_pasted_sums:
+	input:
+		get_pasted_sum_files
+	output:
+		config['staging'] + '/{type}.{study_group_num}.pasted.files.list'
+	params:
+		study_group_num=lambda wildcards: wildcards.study_group_num,
+		staging=config['staging'],
+		type=lambda wildcards: wildcards.type
+	shell:
+		"ls {params.staging}/{params.type}.{params.study_group_num}.??.pasted > {output}"
+
+rule paste_sums_per_study_group:
+	input:
+		config['staging'] + '/{type}.{study_group_num}.pasted.files.list'
+	output:
+		os.path.join(config['staging'], '{type}.{study_group_num}.pasted')
+	params:
+		study_group_num=lambda wildcards: wildcards.study_group_num,
+		staging=config['staging'],
+		script_path=SCRIPTS['paste'],
+		existing_sums=config['existing_sums'],
+		type=lambda wildcards: wildcards.type,
+		pigz_threads=0
+	shell:
+		"{params.script_path} {input} {output} {params.pigz_threads} dont_get_ids"
+
+def get_study_pasted_sum_files(wildcards):
+	fin = open(config['sample_ids_file'], "r")
+	lines = fin.read().split('\n')
+	fin.close()
+	return [config['staging']+"/%s.%s.pasted" % (wildcards.type, f.split('\t')[0][-2:]) for f in lines[:-1]]
+	#return [config['staging']+"/%s.%s.pasted" % (wildcards.type, f.split('/')[-1]) for f in glob.glob(config['input']+'/??')]
+
+rule collect_study_pasted_sums:
+	input:
+		get_study_pasted_sum_files
+	output:
+		config['staging'] + '/{type}.groups.pasted.files.list'
+	params:
+		staging=config['staging'],
+		type=lambda wildcards: wildcards.type
+	shell:
+		"ls {params.staging}/{params.type}.??.pasted > {output}"
+
+rule paste_sums_final:
+	input:
+		config['staging'] + '/{type}.groups.pasted.files.list'
+	output:
+		'{type}.samples.pasted.gz'
+	params:
+		staging=config['staging'],
+		script_path=SCRIPTS['paste'],
+		existing_sums=config['existing_sums'],
+		type=lambda wildcards: wildcards.type,
+		pigz_threads = config['pigz_threads']
+	shell:
+		"{params.script_path} {input} {output} {params.pigz_threads} dont_get_ids {params.existing_sums}"
