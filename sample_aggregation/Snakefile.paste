@@ -62,7 +62,7 @@ rule group_sums:
 		script_path=SCRIPTS['group'],
 		type=lambda wildcards: wildcards.type
 	shell:
-		"{params.script_path} {params.staging}/{params.type}.{params.study_group_num}.{params.run_group_num}.manifest {output}"
+		"{params.script_path} {params.staging}/{params.type}.{params.study_group_num}.{params.run_group_num}.manifest {output} convert_to_int"
 
 #do a rule instantiation per *run* low-order name grouping to do hierarchical pastes
 rule paste_sums_per_group:
