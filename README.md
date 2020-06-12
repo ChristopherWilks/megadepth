@@ -221,10 +221,20 @@ This enables megadepth to have a better chance of handling really long CIGAR str
 * zlib static library [only if building a static binary]
     * See `get_zlib.sh` for a script that gets a recent version and compiles the static library
 
-## Compiling
+## Building
 
-From root directory:
+Run `build_no_container.sh` with one of three options:
 
-```
-mkdir -p build && cd build && cmake .. && make
-```
+* `megadepth_dynamic` (default)
+
+Builds a fully dynamic binary, requires that libraries for `htslib` & `libBigWig` be available in the target environment
+
+* `megadepth_statlib`
+
+Builds a partially dynamic binray, but with `htslib` and `libBigWig` statically linked, still requires that libcurl and zlib be present in the target environment
+
+* `megadepth_static`
+
+Builds a fully static binary, w/o remote BigWig processing support (due to no libcurl)
+
+
