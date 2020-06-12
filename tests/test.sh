@@ -63,4 +63,4 @@ time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam.all.bw --op mean 
 diff bw2.remote.mean.all.tsv tests/testbw2.bed.mean
 
 #clean up
-#rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
+rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
