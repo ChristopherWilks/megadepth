@@ -58,5 +58,9 @@ diff tests/test3.auc.out.tsv test3.auc.tsv
 ./md_runner tests/long_reads.bam --junctions long_reads.bam --long-reads
 diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
 
+#test bigwig2sum on remote BW
+time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam.all.bw --op mean --annotation tests/testbw2.bed bw2.remote.mean >> test_run_out 2>&1
+diff bw2.remote.mean.all.tsv tests/testbw2.bed.mean
+
 #clean up
 #rm -f test*tsv test*auc bw2* test3* test2* t3.tsv long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw
