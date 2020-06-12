@@ -231,7 +231,7 @@ Builds a fully dynamic binary, requires that libraries for `htslib` & `libBigWig
 
 * `megadepth_statlib`
 
-Builds a partially dynamic binray, but with `htslib` and `libBigWig` statically linked, still requires that libcurl and zlib be present in the target environment
+Builds a partially dynamic binary, but with `htslib` and `libBigWig` statically linked, still requires that libcurl and zlib be present in the target environment
 
 * `megadepth_static`
 
