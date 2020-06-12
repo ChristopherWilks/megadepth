@@ -1040,7 +1040,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
     {
         if(fp->cl->len[tid] < 1)
             continue;
-        fprintf(stdout,"processing chromosome %s len:%d \n", fp->cl->chrom[tid], fp->cl->len[tid] );
+        //fprintf(stdout,"processing chromosome %s len:%d \n", fp->cl->chrom[tid], fp->cl->len[tid] );
         iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
 
         if(!iter->data)
