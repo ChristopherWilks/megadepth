@@ -4,11 +4,17 @@
 
 BigWig and BAM related utilities.
 
-We strongly recommend use of the pre-compiled,  [statically compiled binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.2/megadepth_static) for x86_64 linux systems.
+We strongly recommend use of one of the pre-compiled binaries for x86_64 linux systems:
+
+* [dynamically linked binary with HTSlib & libBigWig statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.3/megadepth)
+
+* [statically linked binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.3/megadepth_static)
+
+NOTE: the statically linked binary does not support remote BigWig processing due to the difficulties in linking a static libcurl, but may still be useful for those who want to do local processing on systems where the dynamic binary doesn't work.
 
 [Releases prior to 1.0.2 used the previous name "bamcount"]
 
-If that doesn't work, the build instructions are at the end of this README.
+If neither of those work, the build instructions are at the end of this README.
 
 ## Usage
 
