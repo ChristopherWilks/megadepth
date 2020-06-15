@@ -12,9 +12,19 @@ We strongly recommend use of one of the pre-compiled binaries for x86_64 linux s
 
 NOTE: the statically linked binary does not support remote BigWig processing due to the difficulties in linking a static libcurl, but may still be useful for those who want to do local processing on systems where the dynamic binary doesn't work.
 
-[Releases prior to 1.0.2 used the previous name "bamcount"]
+There is also a Docker image that can be used to run `megadepth`:
 
-If neither of those work, the build instructions are at the end of this README.
+https://quay.io/repository/broadsword/megadepth?tab=tags
+
+You'll probably want to map in a directory on the host system into the container via the `-v` option so you can pass an annotation file in and get output back:
+
+```
+docker run -v `pwd`:/data <image_id> <path/URL/to/input/BAM/or/BigWig> --annotation /data/<annotation>.bed /data/output_file_prefix
+```
+
+Finally, if none of those options work, the build instructions are at the end of this README.
+
+[Releases prior to 1.0.2 used the previous name "bamcount"]
 
 ## Usage
 
