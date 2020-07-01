@@ -44,6 +44,7 @@
 #include <htslib/bgzf.h>
 #include <sys/stat.h>
 #include "bigWig.h"
+#include "robin_hood.h"
 
 int UNKNOWN_FORMAT=-1;
 int BAM_FORMAT = 1;
@@ -55,8 +56,9 @@ const uint32_t default_BW_READ_BUFFER = 1<<30;
 uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 
 typedef std::vector<std::string> strvec;
-typedef std::unordered_map<std::string, uint64_t> mate2len;
-typedef std::unordered_map<std::string, double*> str2dblist;
+//typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
+typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
+typedef robin_hood::unordered_map<std::string, double*> str2dblist;
 
 uint64_t MAX_INT = (2^63);
 //how many intervals to start with for a chromosome in a BigWig file
@@ -503,7 +505,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 //used for buffering up text/gz output
 int OUT_BUFF_SZ=4000000;
 int COORD_STR_LEN=34;
-typedef std::unordered_map<uint32_t,uint32_t> int2int;
+typedef robin_hood::unordered_map<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
                         const uint32_t* arr, 
@@ -625,8 +627,8 @@ static const int32_t align_length(const bam1_t *rec) {
     return bam_endpos(rec) - rec->core.pos;
 }
 
-typedef std::unordered_map<std::string, char*> str2cstr;
-typedef std::unordered_map<std::string, int> str2int;
+typedef robin_hood::unordered_map<std::string, char*> str2cstr;
+typedef robin_hood::unordered_map<std::string, int> str2int;
 typedef std::vector<uint32_t> coords;
 static void extract_junction(const int op, const int len, args_list* out) {
     uint32_t* base = (uint32_t*) (*out)[0];
@@ -644,7 +646,7 @@ static void extract_junction(const int op, const int len, args_list* out) {
 }
 
 
-typedef std::unordered_map<std::string, uint32_t*> read2len;
+typedef robin_hood::unordered_map<std::string, uint32_t*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
@@ -833,10 +835,10 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     return algn_end_pos;
 }
 
-//typedef std::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
-//typedef std::unordered_map<std::string, std::vector<void*>*> annotation_map_t;
+//typedef robin_hood::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
+//typedef robin_hood::unordered_map<std::string, std::vector<void*>*> annotation_map_t;
 template <typename T>
-using annotation_map_t = std::unordered_map<std::string, std::vector<T*>*>;
+using annotation_map_t = robin_hood::unordered_map<std::string, std::vector<T*>*>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
@@ -950,7 +952,8 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<T*>* an
 
 
 static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn, const char *suffix) {
-    if(bwInit(1<<BIGWIG_INIT_VAL) != 0) {
+    //if(bwInit(1<<BIGWIG_INIT_VAL) != 0) {
+    if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(stderr, "Failed when calling bwInit with %d init val\n", BIGWIG_INIT_VAL);
         exit(-1);
     }
@@ -969,7 +972,7 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn
 }
 
 int KALLISTO_MAX_FRAG_LENGTH = 1000;
-typedef std::unordered_map<int32_t, uint32_t> fraglen2count;
+typedef robin_hood::unordered_map<int32_t, uint32_t> fraglen2count;
 static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn) 
 {
     double mean = 0.0;
@@ -1074,9 +1077,9 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 }
 
 
-typedef std::unordered_map<std::string, bool> chr2bool;
+typedef robin_hood::unordered_map<std::string, bool> chr2bool;
 enum Op { csum, cmean, cmin, cmax };
-typedef std::unordered_map<std::string, int> str2op;
+typedef robin_hood::unordered_map<std::string, int> str2op;
 template <typename T>
 static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
@@ -1251,7 +1254,7 @@ void print_local<double>(FILE* afp, const char* c, long start, long end, double 
 }
 
 template <typename T>
-static void output_missing_annotations(const annotation_map_t<T>* annotations, const std::unordered_map<std::string, bool>* annotations_seen, FILE* ofp, Op op = csum) {
+static void output_missing_annotations(const annotation_map_t<T>* annotations, const robin_hood::unordered_map<std::string, bool>* annotations_seen, FILE* ofp, Op op = csum) {
     //check if we're doing means output doubles, otherwise output longs
     T val = 0;
     for(auto const& kv : *annotations) {
@@ -1365,11 +1368,11 @@ Op get_operation(const char* opstr) {
 }
 
 
-typedef std::unordered_map<std::string, uint8_t*> str2str;
+typedef robin_hood::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, std::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order) {
+int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
@@ -1467,7 +1470,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
 }
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, std::unordered_map<std::string, bool>* annotation_chrs_seen, const char* annot_prefix, bool sum_annotation, strlist* chrm_order) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* annot_prefix, bool sum_annotation, strlist* chrm_order) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1560,12 +1563,16 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     read2len overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
-    if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
+    bool auc_opt = has_option(argv, argv+argc, "--auc");
+    bool coverage_opt = has_option(argv, argv+argc, "--coverage");
+    bool annotation_opt = has_option(argv, argv+argc, "--annotation");
+    bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
+    if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
-        just_auc = !has_option(argv, argv+argc, "--coverage");
+        just_auc = !(coverage_opt || annotation_opt || bigwig_opt);
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
-        if(has_option(argv, argv+argc, "--bigwig")) {
+        if(bigwig_opt) {
             const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
         }
@@ -1651,6 +1658,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         //enough for the cigar string and ~100 junctions
         jx_str_sz = 12048;
 
+    bool print_coverage = coverage_opt || auc_opt || just_auc;
+
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -1684,10 +1693,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(prefix, "cov\t%d", ptid);
-                        all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
-                        if(unique) {
-                            sprintf(prefix, "ucov\t%d", ptid);
-                            unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                        if(print_coverage) {
+                            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+                            if(unique) {
+                                sprintf(prefix, "ucov\t%d", ptid);
+                                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                            }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
@@ -1901,10 +1912,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(prefix, "cov\t%d", ptid);
-            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
-            if(unique) {
-                sprintf(prefix, "ucov\t%d", ptid);
-                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+            if(print_coverage) {
+                all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+                if(unique) {
+                    sprintf(prefix, "ucov\t%d", ptid);
+                    unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
                 int keep_order_idx = keep_order?2:-1;
@@ -2003,7 +2016,7 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
     FILE* afp = nullptr;
     annotation_map_t<T> annotations; 
     bool sum_annotation = false;
-    std::unordered_map<std::string, bool> annotation_chrs_seen;
+    robin_hood::unordered_map<std::string, bool> annotation_chrs_seen;
     //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     int err = 0;
