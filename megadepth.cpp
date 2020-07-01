@@ -123,7 +123,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --delta                      Print POS field as +/- delta from previous\n"
     "  --require-mdz                Quit with error unless MD:Z field exists everywhere it's\n"
     "                               expected\n"
-    "  --no-head                    Don't print sequence names and lengths in header\n"
+    "  --head                       Print sequence names and lengths in SAM/BAM header\n"
     "\n"
     "Coverage and quantification:\n"
     "  --coverage           Print per-base coverage (slow but totally worth it)\n"
@@ -1492,7 +1492,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                   << ": " << std::strerror(errno) << std::endl;
         return -1;
     }
-    if(!has_option(argv, argv+argc, "--no-head")) {
+    if(has_option(argv, argv+argc, "--head")) {
         print_header(hdr);
     }
     hts_set_threads(bam_fh, nthreads);
