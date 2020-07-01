@@ -2054,9 +2054,10 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
 
 int get_file_format_extension(const char* fname) {
     int slen = strlen(fname);
-    if(strcmp("bam", &(fname[slen-3])) == 0)
+    if(strcmp("bam", &(fname[slen-3])) == 0 || strcmp("sam", &(fname[slen-3])) == 0)
         return BAM_FORMAT;
     if(strcmp("bw", &(fname[slen-2])) == 0
+            || strcmp("BW", &(fname[slen-2])) == 0
             || strcmp("bigwig", &(fname[slen-6])) == 0
             || strcmp("bigWig", &(fname[slen-6])) == 0
             || strcmp("BigWig", &(fname[slen-6])) == 0)
