@@ -21,4 +21,4 @@ target_link_libraries(megadepth_dynamic z hts BigWig -L${CMAKE_SOURCE_DIR}/htsli
 #requires static libraries for both zlib and pthread
 target_link_libraries(megadepth_static -static ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a -lpthread)
 #this build a dynamic binary, but with htslib, libBigWig, and libz statically linked in
-target_link_libraries(megadepth_statlib ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a -lcurl -lpthread)
+target_link_libraries(megadepth_statlib ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a -lz -lcurl -lpthread)
