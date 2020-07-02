@@ -10,8 +10,16 @@ if [[ ! -s zlib ]] ; then
     ./get_zlib.sh
 fi
 
+if [[ ! -s libdeflate ]] ; then
+    ./get_libdeflate.sh
+fi
+
 if [[ ! -s htslib ]] ; then
+    export CPPFLAGS="-I../libdeflate"
+    export LDFLAGS="-L../libdeflate -ldeflate"
     ./get_htslib.sh
+    export CPPFLAGS=
+    export LDFLAGS=
 fi
 
 if [[ ! -s libBigWig ]] ; then

@@ -7,6 +7,9 @@ set -ex
 #CC must be set as well
 xcross=$1
 
+export CPPFLAGS="-I../libdeflate"
+export LDFLAGS="-L../libdeflate -ldeflate"
+
 VER=1.9
 AR=htslib-${VER}.tar.bz2
 if [[ ! -s htslib ]] ; then
@@ -22,10 +25,10 @@ autoheader
 autoconf
 make clean
 if [[ -z $xcross ]]; then
-    ./configure --disable-bz2 --disable-lzma --disable-libcurl --without-libdeflate
+    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate
     make
 else
-    ./configure --disable-bz2 --disable-lzma --disable-libcurl --without-libdeflate --host=$xcross
+    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate --host=$xcross
     #only make static lib for cross-compilation for now
     export AR=/opt/osxcross/target/bin/x86_64-apple-darwin12-ar
     export RANLIB=/opt/osxcross/target/bin/x86_64-apple-darwin12-ranlib

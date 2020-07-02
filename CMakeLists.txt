@@ -6,7 +6,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DMEGADEPTH_VERSION=\"\\\"`ca
 add_executable(megadepth_dynamic megadepth.cpp)
 add_executable(megadepth_static megadepth.cpp)
 add_executable(megadepth_statlib megadepth.cpp)
-include_directories(htslib libBigWig)
+include_directories(libdeflate htslib libBigWig)
 
 find_package(Threads REQUIRED)
 if(THREADS_HAVE_PTHREAD_ARG)
@@ -21,4 +21,5 @@ target_link_libraries(megadepth_dynamic z hts BigWig -L${CMAKE_SOURCE_DIR}/htsli
 #requires static libraries for both zlib and pthread
 target_link_libraries(megadepth_static -static ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a -lpthread)
 #this build a dynamic binary, but with htslib, libBigWig, and libz statically linked in
-target_link_libraries(megadepth_statlib ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a -lz -lcurl -lpthread)
+#remember order is backwards, earliest needed libraries go *last*
+target_link_libraries(megadepth_statlib ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a -lz -lcurl -lpthread ${CMAKE_SOURCE_DIR}/libdeflate/libdeflate.a)
