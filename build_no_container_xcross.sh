@@ -17,8 +17,16 @@ export RANLIB=${OSXCROSS_ROOT}/$OSX_ARCH-apple-darwin${APPLE_VER}-ranlib
 build_type=$1
 bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } elsif($bt=~/statlib/i) { print "megadepth_statlib"; } else { print "megadepth_dynamic"; }'`
 
+if [[ ! -s libdeflate ]] ; then
+    ./get_libdeflate.sh
+fi
+
 if [[ ! -e htslib/libhts.a ]] ; then
+    export CPPFLAGS="-I../libdeflate"
+    export LDFLAGS="-L../libdeflate -ldeflate"
     ./get_htslib.sh $OSX_ARCH-apple-darwin${APPLE_VER}-gcc
+    export CPPFLAGS=
+    export LDFLAGS=
 fi
 
 if [[ ! -s libBigWig ]] ; then
