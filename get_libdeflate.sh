@@ -3,10 +3,10 @@
 set -ex
 
 VER=1.6
-AR=v${VER}.tar.gz
-FN=libdeflate-${AR}
+TARGZ=${VER}.tar.gz
+FN=libdeflate-${TARGZ}
 DIR=libdeflate-${VER}
-curl -L https://github.com/ebiggers/libdeflate/archive/${AR} > $FN
+curl -L https://github.com/ebiggers/libdeflate/archive/v${TARGZ} > $FN
 tar -zxvf $FN
 rm -f ${FN}
 pushd $DIR

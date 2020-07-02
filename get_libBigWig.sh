@@ -3,10 +3,10 @@
 set -ex
 
 VER=0.4.4
-AR=${VER}.tar.gz
-FN=libBigWig-${AR}
+TARGZ=${VER}.tar.gz
+FN=libBigWig-${TARGZ}
 DIR=libBigWig-${VER}
-curl -L https://github.com/dpryan79/libBigWig/archive/${AR} > $FN
+curl -L https://github.com/dpryan79/libBigWig/archive/${TARGZ} > $FN
 tar -zxvf $FN
 rm -f ${FN}
 pushd $DIR
