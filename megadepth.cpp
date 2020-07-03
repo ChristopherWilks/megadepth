@@ -39,12 +39,16 @@
 #include <unordered_map>
 #include <vector>
 #include <thread>
+#include <chrono>
 #include <math.h>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 #include <sys/stat.h>
 #include "bigWig.h"
 #include "robin_hood.h"
+#include "atomicops.h"
+#include "readerwriterqueue.h"
+
 
 int UNKNOWN_FORMAT=-1;
 int BAM_FORMAT = 1;
@@ -1469,6 +1473,29 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
     return ret;
 }
 
+
+//template <typename T>
+static void read_bam_records(moodycamel::ReaderWriterQueue<bam1_t*> *brec_q, htsFile *bam_fh, bam_hdr_t *hdr) {
+    //queue for storing BAM alignment record ptrs
+    int num_bam_records = 200;
+    int min_records_read = 50;
+    int wait_in_millis = 20;
+    bam1_t **brecs = new bam1_t*[num_bam_records];
+    for(int ix = 0; ix < num_bam_records; ix++)
+        brecs[ix] = bam_init1();
+    int brec_idx = 0;
+    while(sam_read1(bam_fh, hdr, brecs[brec_idx++]) >= 0) {
+        brec_q->enqueue(brecs[brec_idx-1]);
+        //need to start over again
+        if(brec_idx >= num_bam_records) {
+            //wait until some number of records have already been processed by the consumer
+            while((num_bam_records - brec_q->size_approx()) < min_records_read)
+                std::this_thread::sleep_for(std::chrono::milliseconds(wait_in_millis));
+            brec_idx = 0;
+        }
+    }
+}
+
 template <typename T>
 int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* annot_prefix, bool sum_annotation, strlist* chrm_order) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
@@ -1485,6 +1512,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
 
     std::cerr << "Processing BAM: \"" << bam_arg << "\"" << std::endl;
+
 
     bam_hdr_t *hdr = sam_hdr_read(bam_fh);
     if(!hdr) {
@@ -1659,8 +1687,20 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         jx_str_sz = 12048;
 
     bool print_coverage = coverage_opt || auc_opt || just_auc;
+    
+    //queue for storing BAM alignment record ptrs
+    moodycamel::ReaderWriterQueue<bam1_t*> brec_q(200);
+    
+    std::thread reader_thread = std::thread(read_bam_records, &brec_q, bam_fh, hdr);
 
-    while(sam_read1(bam_fh, hdr, rec) >= 0) {
+    //while(sam_read1(bam_fh, hdr, rec) >= 0) {
+    while(brec_q.size_approx() < 20)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    while(brec_q.try_dequeue(rec)) {
+        /*if(!dequeue_good) {
+            fprintf(stderr, "bad dequeue, exiting\n");
+            return -1;
+        }*/
         recs++;
         bam1_core_t *c = &rec->core;
         //read name
@@ -1899,6 +1939,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 cl->clear();
             }
         }
+        while(brec_q.size_approx() < 20)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     delete(cigar_str);
     if(jxs_file) {
@@ -1996,6 +2038,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fprintf(softclip_file,"%lu total number of processed sequence bases\n",total_number_sequence_bases_processed);
         fclose(softclip_file);
     }
+    reader_thread.join();
     return 0;
 }
 
