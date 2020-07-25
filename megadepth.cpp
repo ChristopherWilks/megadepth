@@ -55,6 +55,8 @@ int BW_FORMAT = 2;
 const uint32_t default_BW_READ_BUFFER = 1<<30;
 uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 
+bool SUMS_ONLY = false;
+
 typedef std::vector<std::string> strvec;
 //typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
 typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
@@ -102,6 +104,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed> <prefix>     Only output the regions in this BED applying the argument to --op to them.\n"
     "                                  Uses prefix to name the BED file to output to (similar to BAM processing)\n"
     "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
+    "  --sums-only                     Discard coordinates from output of summarized regions\n"
     "  --bwbuffer <1GB[default]>       Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
     "                                   Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
@@ -155,6 +158,58 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --ends               Report end coordinate for each read (useful for debugging)\n"
     "  --test-polya         Lower Poly-A filter minimums for testing (only useful for debugging/testing)\n"
     "\n";
+
+template <typename T>
+void print_local(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+
+template <typename T>
+void print_local_sums_only(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+
+template <typename T>
+void print_shared(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+
+template <typename T>
+void print_shared_sums_only(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+
+template <>
+void print_local<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
+        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, (long) local_vals[z]);
+}
+
+template <>
+void print_local_sums_only<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
+        fprintf(afp, "%lu\n", (long) local_vals[z]);
+}
+
+template <>
+void print_shared<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
+        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, val);
+}
+
+template <>
+void print_shared_sums_only<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
+        fprintf(afp, "%lu\n", val);
+}
+
+template <>
+void print_shared<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
+        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, val);
+}
+
+template <>
+void print_shared_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
+        fprintf(afp, "%.3f\n", val);
+}
+
+template <>
+void print_local<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
+        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, local_vals[z]);
+}
+
+template <>
+void print_local_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
+        fprintf(afp, "%.3f\n", local_vals[z]);
+}
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
     size_t i = 0;
@@ -1093,6 +1148,9 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return -1;
     }
+    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    if(SUMS_ONLY)
+        printPtr = &print_shared_sums_only;
     uint32_t i, tid, blocksPerIteration;
     //ask for huge # of blocks per chromosome to ensure we get all in one go
     //(this is for convenience, not performance)
@@ -1206,7 +1264,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 }
                 //not trying to keep the order in the BED file, just print them as we find them
                 if(keep_order_idx == -1)
-                    print_shared(afp, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                    (*printPtr)(afp, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
                 else
                     if(store_local)
                         local_vals[z] = value;
@@ -1227,43 +1285,21 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
     return 0;
 }
 
-template <typename T>
-void print_local(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
-
-template <typename T>
-void print_shared(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
-
-template <>
-void print_local<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, (long) local_vals[z]);
-}
-
-template <>
-void print_shared<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, val);
-}
-
-template <>
-void print_shared<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, val);
-}
-
-template <>
-void print_local<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, local_vals[z]);
-}
 
 template <typename T>
 static void output_missing_annotations(const annotation_map_t<T>* annotations, const robin_hood::unordered_map<std::string, bool>* annotations_seen, FILE* ofp, Op op = csum) {
     //check if we're doing means output doubles, otherwise output longs
     T val = 0;
+    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    if(SUMS_ONLY)
+        printPtr = &print_shared_sums_only;
     for(auto const& kv : *annotations) {
         if(annotations_seen->find(kv.first) == annotations_seen->end()) {
             std::vector<T*>* annotations_for_chr = kv.second;
             for(long z = 0; z < annotations_for_chr->size(); z++) {
                 T start = (*annotations_for_chr)[z][0];
                 T end = (*annotations_for_chr)[z][1];
-                print_shared(ofp, kv.first.c_str(), start, end, val, nullptr, z);
+                (*printPtr)(ofp, kv.first.c_str(), start, end, val, nullptr, z);
             }
         }
     }
@@ -1277,9 +1313,13 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
             continue;
         std::vector<T*>* annotations_for_chr = (*annotations)[c];
         void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+        if(SUMS_ONLY)
+            printPtr = &print_shared_sums_only;
         if(store_local) {
             local_vals = (*store_local)[c];
             printPtr = &print_local;
+            if(SUMS_ONLY)
+                printPtr = &print_local_sums_only;
         }
         //check if we're doing means output doubles, otherwise output longs
         for(long z = 0; z < annotations_for_chr->size(); z++) {
@@ -2079,6 +2119,9 @@ int main(int argc, const char** argv) {
     if(has_option(argv, argv+argc, "--bwbuffer")) {
         const char* opstr = *(get_option(argv, argv+argc, "--bwbuffer"));
         BW_READ_BUFFER = atol(opstr);
+    }
+    if(has_option(argv, argv+argc, "--sums-only")) {
+        SUMS_ONLY = true;
     }
     const char *fname_arg = get_positional_n(argv, argv+argc, 0);
     if(!fname_arg) {
