@@ -92,6 +92,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --threads            # of threads to do: BAM decompression OR compute sums over multiple BigWigs in parallel\n"
     "                       if the 2nd is intended then a TXT file listing the paths to the BigWigs to process in parallel\n"
     "                       should be passed in as the main input file instead of a single BigWig file (EXPERIMENTAL).\n"
+    "  --prefix             String to use to prefix all output files.\n"
+    "  --no-annotation-stdout   Force summarized annotation regions to be written to <prefix>.annotation.tsv rather than STDOUT\n"
     "  --keep-order         Output annotation coverage in the order chromosomes appear in the BAM/BigWig file.\n"
     "                       The default is to output annotation coverage in the order chromosomes appear in the annotation BED file.\n"
     "                       This is only applicable if --annotation is used for either BAM or BigWig input.\n"
@@ -101,24 +103,23 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Extracts all reads from the passed in BigWig and output as BED format.\n"
     "                       This will also report the AUC over the annotated regions to STDOUT.\n"
     "                       If only the name of the BigWig file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
-    "  --annotation <bed> <prefix>     Only output the regions in this BED applying the argument to --op to them.\n"
-    "                                  Uses prefix to name the BED file to output to (similar to BAM processing)\n"
+    "  --annotation <bed>   Only output the regions in this BED applying the argument to --op to them.\n"
     "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
-    "  --sums-only                     Discard coordinates from output of summarized regions\n"
+    "  --sums-only          Discard coordinates from output of summarized regions\n"
     "  --bwbuffer <1GB[default]>       Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
     "                                   Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
     "\n"
     "BAM Input:\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
-    "  --junctions <prefix> Extract jx coordinates, strand, and anchor length, per read\n"
+    "  --junctions          Extract jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
     "\n"
     "Non-reference summaries:\n"
-    "  --alts <prefix>              Print differing from ref per-base coverages\n"
+    "  --alts                       Print differing from ref per-base coverages\n"
     "                               Writes to a CSV file <prefix>.alts.tsv\n"
-    "  --include-softclip <prefix>  Print a record to the alts CSV for soft-clipped bases\n"
+    "  --include-softclip           Print a record to the alts CSV for soft-clipped bases\n"
     "                               Writes total counts to a separate TSV file <prefix>.softclip.tsv\n"
     "  --only-polya                 If --include-softclip, only print softclips which are mostly A's or T's\n"
     "  --include-n                  Print mismatch records when mismatched read base is N\n"
@@ -130,14 +131,13 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Coverage and quantification:\n"
     "  --coverage           Print per-base coverage (slow but totally worth it)\n"
-    "  --auc <prefix>       Print per-base area-under-coverage, will generate it for the genome\n"
+    "  --auc                Print per-base area-under-coverage, will generate it for the genome\n"
     "                       and for the annotation if --annotation is also passed in\n"
     "                       Writes to a TSV file <prefix>.auc.tsv\n"
-    "  --bigwig <prefix>    Output coverage as BigWig file(s).  Writes to <prefix>.all.bw\n"
+    "  --bigwig             Output coverage as BigWig file(s).  Writes to <prefix>.bw\n"
     "                       (also <prefix>.unique.bw when --min-unique-qual is specified).\n"
     "                       Requires libBigWig.\n"
-    "  --annotation <bed> <prefix>\n"
-    "                       Path to BED file containing list of regions to sum coverage over\n"
+    "  --annotation <bed>   Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
@@ -152,7 +152,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --read-ends          Print counts of read starts/ends, if --min-unique-qual is set\n"
     "                       then only the alignments that pass that filter will be counted here\n"
     "                       Writes to 2 TSV files: <prefix>.starts.tsv, <prefix>.ends.tsv\n"
-    "  --frag-dist <prefix> Print fragment length distribution across the genome\n"
+    "  --frag-dist          Print fragment length distribution across the genome\n"
     "                       Writes to a TSV file <prefix>.frags.tsv\n"
     "  --echo-sam           Print a SAM record for each aligned read\n"
     "  --ends               Report end coordinate for each read (useful for debugging)\n"
@@ -1412,13 +1412,13 @@ typedef robin_hood::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order) {
+int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
     int slen = strlen(bam_arg);
     bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
-    fprintf(stdout,"filename:%s\n",bam_arg);
+    fprintf(stderr,"filename:%s\n",bam_arg);
     std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
     //just do all/total AUC if no options are passed in
     if(argc == 1 || (argc == 3 && default_BW_READ_BUFFER != BW_READ_BUFFER)) {
@@ -1502,15 +1502,17 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
     else
         output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
-    if(afp)
+    if(afp && afp != stdout)
         fclose(afp);
     if(ret == 0)
-        fprintf(stdout, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
+        fprintf(auc_file, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
+    if(auc_file && auc_file != stdout)
+        fclose(auc_file);
     return ret;
 }
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* annot_prefix, bool sum_annotation, strlist* chrm_order) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1520,7 +1522,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     FILE* uafp = nullptr;
     if(unique) {
         char afn[1024];
-        sprintf(afn, "%s.unique.tsv", annot_prefix);
+        sprintf(afn, "%s.unique.tsv", prefix);
         uafp = fopen(afn, "w");
     }
 
@@ -1537,16 +1539,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     hts_set_threads(bam_fh, nthreads);
     
-    bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
-    FILE* auc_file = nullptr;
-    if(has_option(argv, argv+argc, "--auc")) {
-        const char *prefix = *get_option(argv, argv+argc, "--auc");
-        char afn[1024];
-        sprintf(afn, "%s.auc.tsv", prefix);
-        auc_file = fopen(afn, "w");
-        if(!has_annotation)
-            just_auc = true;
-    }
     
     //setup list of callbacks for the process_cigar()
     //this is so we only have to walk the cigar for each alignment ~1 time
@@ -1569,7 +1561,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     uint64_t total_number_sequence_bases_processed = 0;
     if(has_option(argv, argv+argc, "--include-softclip")) {
         include_sc = true;
-        const char *prefix = *get_option(argv, argv+argc, "--include-softclip");
         char afn[1024];
         sprintf(afn, "%s.softclip.tsv", prefix);
         softclip_file = fopen(afn, "w");
@@ -1607,26 +1598,25 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool coverage_opt = has_option(argv, argv+argc, "--coverage");
     bool annotation_opt = has_option(argv, argv+argc, "--annotation");
     bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
+    bool just_auc = false;
     if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
         just_auc = !(coverage_opt || annotation_opt || bigwig_opt);
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
         if(bigwig_opt) {
-            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
-            bwfp = create_bigwig_file(hdr, bw_fn, "all.bw");
+            bwfp = create_bigwig_file(hdr, prefix,"all.bw");
         }
         if(unique) {
-            const char *bw_fn = *get_option(argv, argv+argc, "--bigwig");
             if(!just_auc)
-                ubwfp = create_bigwig_file(hdr, bw_fn, "unique.bw");
+                ubwfp = create_bigwig_file(hdr, prefix, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
     }
     fraglen2count* frag_dist = new fraglen2count(1);
     mate2len* frag_mates = new mate2len(1);
-    char prefix[50]="";
+    char cov_prefix[50]="";
     int32_t ptid = -1;
     uint32_t* starts = nullptr;
     uint32_t* ends = nullptr;
@@ -1635,7 +1625,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     FILE* refp = nullptr;
     if(has_option(argv, argv+argc, "--read-ends")) {
         compute_ends = true;
-        const char *prefix = *get_option(argv, argv+argc, "--read-ends");
         char refn[1024];
         sprintf(refn, "%s.starts.tsv", prefix);
         rsfp = fopen(refn,"w");
@@ -1649,7 +1638,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool print_frag_dist = false;
     FILE* fragdist_file = nullptr;
     if(has_option(argv, argv+argc, "--frag-dist")) {
-        const char *prefix = *get_option(argv, argv+argc, "--frag-dist");
         char afn[1024];
         sprintf(afn, "%s.frags.tsv", prefix);
         fragdist_file = fopen(afn, "w");
@@ -1659,7 +1647,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     std::fstream alts_file;
     bool compute_alts = false;
     if(has_option(argv, argv+argc, "--alts")) {
-        const char *prefix = *get_option(argv, argv+argc, "--alts");
         char afn[1024];
         sprintf(afn, "%s.alts.tsv", prefix);
         alts_file.open(afn, std::fstream::out);
@@ -1675,7 +1662,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(has_option(argv, argv+argc, "--junctions")) {
         junctions.push_back(&len);
         junctions.push_back(&jx_coords);
-        const char *prefix = *get_option(argv, argv+argc, "--junctions");
         char afn[1024];
         sprintf(afn, "%s.jxs.tsv", prefix);
         jxs_file = fopen(afn, "w");
@@ -1732,12 +1718,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 if(tid != ptid) {
                     if(ptid != -1) {
                         overlapping_mates.clear();
-                        sprintf(prefix, "cov\t%d", ptid);
+                        sprintf(cov_prefix, "cov\t%d", ptid);
                         if(print_coverage) {
-                            all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
                             if(unique) {
-                                sprintf(prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                                sprintf(cov_prefix, "ucov\t%d", ptid);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
@@ -1951,12 +1937,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(compute_coverage) {
         if(ptid != -1) {
-            sprintf(prefix, "cov\t%d", ptid);
+            sprintf(cov_prefix, "cov\t%d", ptid);
             if(print_coverage) {
-                all_auc += print_array(prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
                 if(unique) {
-                    sprintf(prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                    sprintf(cov_prefix, "ucov\t%d", ptid);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -2019,13 +2005,13 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fclose(refp);
     if(compute_alts && alts_file)
         alts_file.close();
-    if(auc_file)
+    if(auc_file && auc_file != stdout)
         fclose(auc_file);
-    if(afp)
+    if(afp && afp != stdout)
         fclose(afp);
     if(uafp)
         fclose(uafp);
-    fprintf(stdout,"Read %lu records\n",recs);
+    fprintf(stderr,"Read %lu records\n",recs);
     if(count_bases) {
         fprintf(stdout,"%lu records passed filters\n",reads_processed);
         fprintf(stdout,"%lu bases in alignments which passed filters\n",*((uint64_t*) maplen_outlist[0]));
@@ -2040,10 +2026,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
 }
 
 template <typename T>
-int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, bool is_bam) {
+int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_fh, bool is_bam) {
     //number of bam decompression threads
-    //0 == 1 thread for the whole program, i.e.
-    //decompression shares a single core with processing
+    //0 == 1 thread for the whole program,fname_arg//decompression shares a single core with processing
     //This can also indicate the number of parallel threads to process a list of BigWigs for
     //the purpose of summing over a passed in annotation
     int nthreads = 0;
@@ -2061,7 +2046,10 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     int err = 0;
     bool has_annotation = has_option(argv, argv+argc, "--annotation");
-    const char* prefix = nullptr;
+    bool no_annotation_stdout = has_option(argv, argv+argc, "--no-annotation-stdout");
+    const char* prefix = fname_arg;
+    if(has_option(argv, argv+argc, "--prefix"))
+            prefix = *(get_option(argv, argv+argc, "--prefix"));
     if(has_annotation) {
         sum_annotation = true;
         const char* afile = *(get_option(argv, argv+argc, "--annotation"));
@@ -2069,27 +2057,35 @@ int go(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh,
             std::cerr << "No argument to --annotation" << std::endl;
             return -1;
         }
-        prefix = *(get_option(argv, argv+argc, "--annotation", 1));
-        if(!prefix) {
-            std::cerr << "No argument to --annotation" << std::endl;
-            return -1;
-        }
         afp = fopen(afile, "r");
         err = read_annotation(afp, &annotations, &chrm_order, keep_order);
         fclose(afp);
-        afp = nullptr;
-
-        char afn[1024];
-        sprintf(afn, "%s.all.tsv", prefix);
-        afp = fopen(afn, "w");
+        
+        afp = stdout;
+        if(no_annotation_stdout) {
+            char afn[1024];
+            sprintf(afn, "%s.annotation.tsv", prefix);
+            afp = fopen(afn, "w");
+        }
         assert(!annotations.empty());
         std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
     }
+    
+    bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
+    FILE* auc_file = stdout;
+    if(has_option(argv, argv+argc, "--auc")) {
+        char afn[1024];
+        sprintf(afn, "%s.auc.tsv", prefix);
+        auc_file = fopen(afn, "w");
+        if(!has_annotation)
+            just_auc = true;
+    }
+
     assert(err == 0);
     if(is_bam)
-        return go_bam(bam_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order);
+        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file);
     else
-        return go_bw(bam_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order);
+        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file);
 }
 
 int get_file_format_extension(const char* fname) {
