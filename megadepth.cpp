@@ -46,6 +46,15 @@
 #include "bigWig.h"
 #include "robin_hood.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+#  ifndef unlikely
+#    define unlikely(x) __builtin_expect(!!(x), 0)
+#  endif
+#  ifndef likely
+#    define likely(x) __builtin_expect(!!(x), 1)
+#  endif
+#endif
+
 int UNKNOWN_FORMAT=-1;
 int BAM_FORMAT = 1;
 int BW_FORMAT = 2;
@@ -893,7 +902,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
 //typedef robin_hood::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
 //typedef robin_hood::unordered_map<std::string, std::vector<void*>*> annotation_map_t;
 template <typename T>
-using annotation_map_t = robin_hood::unordered_map<std::string, std::vector<T*>*>;
+using annotation_map_t = robin_hood::unordered_map<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
@@ -948,7 +957,8 @@ static const int process_region_line(char* line, const char* delim, annotation_m
             ((long*) coords)[3] = 0;
         }
     }*/
-    if(amap->find(chrm) == amap->end()) {
+    auto it = amap->find(chrm);
+    if(it == amap->end()) {
         //std::vector<void*>* v = new std::vector<long*>();
         /*std::vector<void*>* v;
         if(use_double) {
@@ -957,10 +967,10 @@ static const int process_region_line(char* line, const char* delim, annotation_m
         }
         else
             v = new std::vector<long*>();*/
-        (*amap)[chrm] = new std::vector<T*>();;
+        amap->emplace(chrm, std::vector<T*>());
         chrm_order->push_back(chrm);
     }
-    (*amap)[chrm]->push_back(coords);
+    it->second.push_back(coords);
     if(line_copy)
         free(line_copy);
     if(line)
@@ -970,7 +980,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     
 template <typename T>
 static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
-    char* line = new char[LINE_BUFFER_LENGTH];
+    char *line = (char *)std::malloc(LINE_BUFFER_LENGTH * sizeof(char));
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
@@ -985,12 +995,12 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
 }
 
 template <typename T>
-static void sum_annotations(const uint32_t* coverages, const std::vector<T*>* annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
     long z, j;
-    for(z = 0; z < annotations->size(); z++) {
+    for(z = 0; z < annotations.size(); z++) {
         T sum = 0;
-        T start = (*annotations)[z][0];
-        T end = (*annotations)[z][1];
+        T start = annotations[z][0];
+        T end = annotations[z][1];
         for(j = start; j < end; j++) {
             assert(j < chr_size);
             sum += coverages[j];
@@ -1000,7 +1010,7 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<T*>* an
             if(keep_order_idx == -1)
                 print_shared(ofp, chrm, (long) start, (long) end, sum, nullptr, 0);
             else
-                (*annotations)[z][keep_order_idx] = sum;
+                annotations[z][keep_order_idx] = sum;
         }
     }
 }
@@ -1183,10 +1193,10 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             }
             uint32_t istart = iter->intervals->start[0];
             uint32_t iend = iter->intervals->end[num_intervals-1];
-            std::vector<T*>* annotations = (*amap)[fp->cl->chrom[tid]];
+            std::vector<T*>& annotations = amap->operator[](fp->cl->chrom[tid]);
             long z, j, k;
             long last_j = 0;
-            long asz = annotations->size();
+            long asz = annotations.size();
             double* local_vals;
             //if running in multithreaded mode, want to store the values locally
             //but also don't want to reallocate for every new bigwig file, so
@@ -1201,12 +1211,13 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             }
             //loop through annotation intervals as outer loop
             for(z = 0; z < asz; z++) {
+                const auto &az = annotations[z];
                 double sum = 0;
                 double min = MAX_INT;
                 double max = 0;
-                T start = (*annotations)[z][0];
+                T start = az[0];
                 T ostart = start;
-                T end = (*annotations)[z][1];
+                T end = az[1];
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
                 while(start < iter->intervals->start[last_j])
@@ -1269,7 +1280,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     if(store_local)
                         local_vals[z] = value;
                     else
-                        (*annotations)[z][keep_order_idx] = value;
+                        az[keep_order_idx] = value;
             }
             annotation_chrs_seen->insert(fp->cl->chrom[tid]);
             if(store_local)
@@ -1295,11 +1306,10 @@ static void output_missing_annotations(const annotation_map_t<T>* annotations, c
         printPtr = &print_shared_sums_only;
     for(auto const& kv : *annotations) {
         if(annotations_seen->find(kv.first) == annotations_seen->end()) {
-            std::vector<T*>* annotations_for_chr = kv.second;
-            for(long z = 0; z < annotations_for_chr->size(); z++) {
-                T start = (*annotations_for_chr)[z][0];
-                T end = (*annotations_for_chr)[z][1];
-                (*printPtr)(ofp, kv.first.c_str(), start, end, val, nullptr, z);
+            const auto &ants = kv.second;
+            for(unsigned long z = 0; z < kv.second.size(); z++) {
+                const auto p = ants[z];
+                (*printPtr)(ofp, kv.first.c_str(), p[0], p[1], val, nullptr, z);
             }
         }
     }
@@ -1311,7 +1321,7 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
     for(auto const c : *chrm_order) {
         if(!c)
             continue;
-        std::vector<T*>* annotations_for_chr = (*annotations)[c];
+        std::vector<T*>& annotations_for_chr = (*annotations)[c];
         void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
         if(SUMS_ONLY)
             printPtr = &print_shared_sums_only;
@@ -1322,14 +1332,14 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
                 printPtr = &print_local_sums_only;
         }
         //check if we're doing means output doubles, otherwise output longs
-        for(long z = 0; z < annotations_for_chr->size(); z++) {
-            T start = (*annotations_for_chr)[z][0];
-            T end = (*annotations_for_chr)[z][1];
-            T val = (*annotations_for_chr)[z][2];
+        for(long z = 0; z < annotations_for_chr.size(); z++) {
+            const auto &item = annotations_for_chr[z];
+            const T start = item[0], end = item[1];
+            T val = item[2];
             (*printPtr)(afp, c, (long) start, (long) end, val, local_vals, z);
             //do uniques if asked to
             if(uafp) {
-                val = (*annotations_for_chr)[z][3];
+                val = item[3];
                 (*printPtr)(uafp, c, (long) start, (long) end, val, local_vals, z);
             }
         }
@@ -1357,8 +1367,7 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         strvec tokens;
         const char* bwfn = bwfn_.c_str();
         fprintf(stderr, "about to process %s\n", bwfn);
-        bwfn_copy = strdup(bwfn);
-        std::string str(bwfn_copy);
+        std::string str(bwfn_);
         split_string(str, '/', &tokens);
         char afn[1024];
         FILE* afp = nullptr;
@@ -1389,8 +1398,6 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         //fprintf(errfp, "AUC\t%.3f\n", annotated_auc);
         fprintf(errfp,"SUCCESS processing bigwig %s\n", bwfn);
         fclose(errfp);
-        if(bwfn_copy)
-            delete(bwfn_copy);
     }
     //hold off on final deletion, for performance
     /*for( auto mitr : store_local)
@@ -1444,7 +1451,8 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
             bytes_per_thread[i] = 0;
         }
         FILE* bw_list_fp = fopen(bam_arg, "r");
-        char* bwfn = new char[LINE_BUFFER_LENGTH];
+        if(unlikely(bw_list_fp == nullptr)) assert(false);
+        char *bwfn = (char *)std::malloc(LINE_BUFFER_LENGTH);
         size_t length = LINE_BUFFER_LENGTH;
         ssize_t bytes_read = getline(&bwfn, &length, bw_list_fp);
         int file_idx = 0;
@@ -1455,12 +1463,13 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         uint64_t total_fsize = 0;
         uint32_t num_files = 0;
         while(bytes_read != -1) {
-            bwfn[bytes_read-1]='\0';
+            char *bp = bwfn;
+            bp[bytes_read-1]='\0';
             int thread_i = file_idx++ % nthreads;
-            std::string str(strdup(bwfn));
+            std::string str(bp);
             files.push_back(str);
             if(LOAD_BALANCE) {
-                stat(bwfn, &fstat);
+                stat(bp, &fstat);
                 fsizes.push_back(fstat.st_size);
                 total_fsize += fstat.st_size;
             }
@@ -1487,12 +1496,11 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         for(int i=0; i < nthreads; i++) {
                 threads.push_back(std::thread(process_bigwig_worker<T>, std::ref(*(files_per_thread[i])), annotations, chrm_order, keep_order_idx, op=op));
         }
-        delete(bwfn);
-        for(int i=0; i < threads.size(); i++)
-            threads[i].join();
+        for(auto &t: threads) t.join();
         fclose(bw_list_fp);
         if(afp)
             fclose(afp);
+        std::free(bwfn);
         return 0; 
     }
     //don't have a list of BigWigs, so just process the single one
