@@ -1132,7 +1132,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 }
 
 
-typedef robin_hood::unordered_map<std::string, bool> chr2bool;
+using chr2bool = robin_hood::unordered_set<std::string>;
 enum Op { csum, cmean, cmin, cmax };
 typedef robin_hood::unordered_map<std::string, int> str2op;
 template <typename T>
@@ -1271,7 +1271,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     else
                         (*annotations)[z][keep_order_idx] = value;
             }
-            (*annotation_chrs_seen)[fp->cl->chrom[tid]] = true;
+            annotation_chrs_seen->insert(fp->cl->chrom[tid]);
             if(store_local)
                 (*store_local)[fp->cl->chrom[tid]] = local_vals;
             bwIteratorDestroy(iter);
@@ -1287,7 +1287,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
 
 
 template <typename T>
-static void output_missing_annotations(const annotation_map_t<T>* annotations, const robin_hood::unordered_map<std::string, bool>* annotations_seen, FILE* ofp, Op op = csum) {
+static void output_missing_annotations(const annotation_map_t<T>* annotations, const chr2bool* annotations_seen, FILE* ofp, Op op = csum) {
     //check if we're doing means output doubles, otherwise output longs
     T val = 0;
     void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
@@ -1412,7 +1412,7 @@ typedef robin_hood::unordered_map<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
+int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
@@ -1512,7 +1512,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
 }
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, robin_hood::unordered_map<std::string, bool>* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1735,7 +1735,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                 sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                             }
                             if(!keep_order)
-                                (*annotation_chrs_seen)[strdup(hdr->target_name[ptid])] = true;
+                                annotation_chrs_seen->insert(hdr->target_name[ptid]);
                         }
                     }
                     reset_array(coverages, chr_size);
@@ -1953,7 +1953,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
                 }
                 if(!keep_order)
-                    (*annotation_chrs_seen)[strdup(hdr->target_name[ptid])] = true;
+                    annotation_chrs_seen->insert(hdr->target_name[ptid]);
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
             if(keep_order)
@@ -2041,7 +2041,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     FILE* afp = nullptr;
     annotation_map_t<T> annotations; 
     bool sum_annotation = false;
-    robin_hood::unordered_map<std::string, bool> annotation_chrs_seen;
+    chr2bool annotation_chrs_seen;
     //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     int err = 0;
