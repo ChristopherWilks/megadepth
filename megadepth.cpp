@@ -976,7 +976,7 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
-    std::fprintf(stderr, "read %zd bytes. line: '%s'\n", bytes_read, line);
+    //std::fprintf(stderr, "read %zd bytes. line: '%s'\n", bytes_read, line);
     int err = 0;
     while(bytes_read != -1) {
         err = process_region_line(line, "\t", amap, chrm_order, keep_order);
