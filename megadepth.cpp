@@ -102,6 +102,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       should be passed in as the main input file instead of a single BigWig file (EXPERIMENTAL).\n"
     "  --prefix             String to use to prefix all output files.\n"
     "  --no-annotation-stdout   Force summarized annotation regions to be written to <prefix>.annotation.tsv rather than STDOUT\n"
+    "  --no-coverage-stdout   Force covered regions to be written to <prefix>.coverage.tsv rather than STDOUT\n"
     "  --keep-order         Output annotation coverage in the order chromosomes appear in the BAM/BigWig file.\n"
     "                       The default is to output annotation coverage in the order chromosomes appear in the annotation BED file.\n"
     "                       This is only applicable if --annotation is used for either BAM or BigWig input.\n"
@@ -575,7 +576,8 @@ static uint64_t print_array(const char* prefix,
                         const long arr_sz,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
-                        const bool just_auc = false) {
+                        FILE* cov_fh,
+                        const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
     float running_value = 0;
@@ -605,7 +607,7 @@ static uint64_t print_array(const char* prefix,
                 if(running_value > 0 || !skip_zeros) {
                     //based on wiggletools' AUC calculation
                     auc += (i - last_pos) * ((long) running_value);
-                    if(not just_auc) {
+                    if(not dont_output_coverage) {
                         if(bwfp && first_print)
                             bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
                         else if(bwfp)
@@ -613,7 +615,7 @@ static uint64_t print_array(const char* prefix,
                         else {
                             if(buf_written >= num_lines_per_buf) {
                                 bufptr[0]='\0';
-                                fprintf(stdout, "%s", buf); 
+                                fprintf(cov_fh, "%s", buf); 
                                 bufptr = buf;
                                 buf_written = 0;
                             }
@@ -632,7 +634,7 @@ static uint64_t print_array(const char* prefix,
     if(!first) {
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
-            if(not just_auc) {
+            if(not dont_output_coverage) {
                 if(bwfp && first_print)
                     bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
                 else if(bwfp)
@@ -640,9 +642,9 @@ static uint64_t print_array(const char* prefix,
                 else {
                     if(buf_written > 0) {
                         bufptr[0]='\0';
-                        fprintf(stdout, "%s", buf); 
+                        fprintf(cov_fh, "%s", buf); 
                     }
-                    fprintf(stdout, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    fprintf(cov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
                 }
             }
         }
@@ -1594,24 +1596,35 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     read2len overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
+    //--coverage -> output perbase coverage to STDOUT (compute_coverage=true)
+    //--bigwig -> output perbase coverage to bigwig (compute_coverage=true),
+    //  this option overrides --coverage=>coverage will be *only* written to the bigwig 
+    //  even if --coverage is also passed in
+    //--auc -> output AUC of coverage (compute_coverage=true)
+    //--annotation output annotated regions of coverage (compute_coverage=true)
     bool auc_opt = has_option(argv, argv+argc, "--auc");
     bool coverage_opt = has_option(argv, argv+argc, "--coverage");
     bool annotation_opt = has_option(argv, argv+argc, "--annotation");
     bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
-    bool just_auc = false;
+    bool dont_output_coverage = !(coverage_opt || bigwig_opt);
+    FILE* cov_fh = stdout;
     if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
-        just_auc = !(coverage_opt || annotation_opt || bigwig_opt);
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
         if(bigwig_opt) {
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
         }
         if(unique) {
-            if(!just_auc)
+            if(bigwig_opt)
                 ubwfp = create_bigwig_file(hdr, prefix, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
+        }
+        if(coverage_opt && !bigwig_opt && has_option(argv, argv+argc, "--no-coverage-stdout")) {
+            char cov_fn[1024];
+            sprintf(cov_fn, "%s.coverage.tsv", prefix);
+            cov_fh = fopen(cov_fn,"w");
         }
     }
     fraglen2count* frag_dist = new fraglen2count(1);
@@ -1684,8 +1697,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         //enough for the cigar string and ~100 junctions
         jx_str_sz = 12048;
 
-    bool print_coverage = coverage_opt || auc_opt || just_auc;
-
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
         bam1_core_t *c = &rec->core;
@@ -1719,20 +1730,20 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
-                        if(print_coverage) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+                        if(coverage_opt || bigwig_opt || auc_opt) {
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, dont_output_coverage);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, dont_output_coverage);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
-                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, !annotation_opt, keep_order_idx);
                             if(unique) {
                                 keep_order_idx = keep_order?3:-1;
-                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, !annotation_opt, keep_order_idx);
                             }
                             if(!keep_order)
                                 annotation_chrs_seen->insert(hdr->target_name[ptid]);
@@ -1938,19 +1949,19 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
-            if(print_coverage) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, just_auc);
+            if(coverage_opt || bigwig_opt || auc_opt) {
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, dont_output_coverage);
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, just_auc);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, dont_output_coverage);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
                 int keep_order_idx = keep_order?2:-1;
-                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, false, keep_order_idx);
                 if(unique) {
                     keep_order_idx = keep_order?3:-1;
-                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, false, keep_order_idx);
                 }
                 if(!keep_order)
                     annotation_chrs_seen->insert(hdr->target_name[ptid]);
@@ -1999,6 +2010,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         bwClose(ubwfp);
             bwCleanup();
     }
+    if(cov_fh && cov_fh != stdout)
+        fclose(cov_fh);
     if(rsfp)
         fclose(rsfp);
     if(refp)
@@ -2071,14 +2084,11 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
         std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
     }
     
-    bool just_auc = (has_option(argv, argv+argc, "--just-auc"));
     FILE* auc_file = stdout;
     if(has_option(argv, argv+argc, "--auc")) {
         char afn[1024];
         sprintf(afn, "%s.auc.tsv", prefix);
         auc_file = fopen(afn, "w");
-        if(!has_annotation)
-            just_auc = true;
     }
 
     assert(err == 0);

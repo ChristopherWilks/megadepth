@@ -3,7 +3,7 @@ set -xe
 
 rm -f test.bam.auc.tsv test.bam.annotation.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv test.bam.softclip.tsv
 
-time ./md_runner tests/test.bam --prefix test.bam --threads 4 --coverage --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
+time ./md_runner tests/test.bam --prefix test.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
 
 diff <(sort tests/test.bam.orig.frags.tsv) <(sort test.bam.frags.tsv)
 diff tests/test.bam.orig.alts.tsv test.bam.alts.tsv
