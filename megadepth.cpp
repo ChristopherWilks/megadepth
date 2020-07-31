@@ -732,7 +732,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     int n_mspans = 0;
     int32_t** mspans = nullptr;
     int mspans_idx = 0;
-    std::string tn(qname);
+    const std::string tn(qname);
     int32_t end_pos = bam_endpos(rec);
     uint32_t mate_passes_quality = 0;
     //-----First Mate Check
@@ -741,10 +741,12 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //and we overlap with our mate, then store our cigar + length
     //for the later mate to adjust its coverage appropriately
     if(coverages && !double_count && (rec->core.flag & BAM_FPROPER_PAIR) == 2) {
+        auto mit = overlapping_mates->find(tn);
+    
         if(rec->core.tid == rec->core.mtid &&
                 end_pos > mrefpos && 
                 refpos <= mrefpos &&
-                overlapping_mates->find(tn) == overlapping_mates->end()) {
+                mit == overlapping_mates->end()) {
             const uint32_t* mcigar = bam_get_cigar(rec);
             uint32_t n_cigar = rec->core.n_cigar;
             uint32_t* mate_info = new uint32_t[n_cigar+3];
@@ -755,7 +757,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             (*overlapping_mates)[tn] = mate_info;
         }
         //-------Second Mate Check
-        else if(overlapping_mates->find(tn) != overlapping_mates->end()) {
+        else if(mit != overlapping_mates->end()) {
             uint32_t* mate_info = (*overlapping_mates)[tn];
             uint32_t mn_cigar = mate_info[0];
             int32_t real_mate_pos = mate_info[1];
@@ -778,8 +780,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 }
             }
             delete[] mate_info;
-            int nerased = overlapping_mates->erase(tn);
-            assert(nerased == 1);
+            overlapping_mates->erase(mit);
             n_mspans = mspans_idx;
             mendpos = malgn_end_pos;
         }
@@ -907,8 +908,7 @@ typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
 static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
-	char* line_copy = strdup(line);
-	char* tok = strtok(line_copy, delim);
+	char* tok = strtok(line, delim);
 	int i = 0;
 	char* chrm = nullptr;
     long start = -1;
@@ -921,22 +921,20 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 		if(i == CHRM_COL) {
 			chrm = strdup(tok);
 		}
-		if(i == START_COL)
+		else if(i == START_COL)
 			start = atol(tok);
-		if(i == END_COL)
+		else if(i == END_COL)
 			end = atol(tok);
 		i++;
 		tok = strtok(nullptr, delim);
 	}
+    if(chrm == nullptr) throw std::runtime_error("chrm is missing?");
     //if we need to keep the order, then we'll store values here
     int alen = keep_order?4:2;
     T* coords = new T[alen];
     coords[0] = start;
     coords[1] = end;
-    if(alen >= 4) {
-        coords[2] = 0;
-        coords[3] = 0;
-    }
+    std::fill(coords + 2, coords + alen, 0);
     /*if(use_double) {
         coords = new double[alen];
         //coords[0] = start;
@@ -967,29 +965,33 @@ static const int process_region_line(char* line, const char* delim, annotation_m
         }
         else
             v = new std::vector<long*>();*/
-        amap->emplace(chrm, std::vector<T*>());
         chrm_order->push_back(chrm);
+        it = amap->emplace(chrm, std::vector<T*>()).first;
     }
     it->second.push_back(coords);
-    if(line_copy)
-        free(line_copy);
-    if(line)
-        free(line);
     return ret;
 }
     
 template <typename T>
 static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
-    char *line = (char *)std::malloc(LINE_BUFFER_LENGTH * sizeof(char));
+    if(!fin) throw std::runtime_error("fin is null");
+    char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
+    if(!line) throw 2;
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
+    std::fprintf(stderr, "read %zd bytes. line: '%s'\n", bytes_read, line);
     int err = 0;
     while(bytes_read != -1) {
-        err = process_region_line(strdup(line), "\t", amap, chrm_order, keep_order);
+        err = process_region_line(line, "\t", amap, chrm_order, keep_order);
+        if(err) {
+            std::cerr << "Error: " << err << " in process_region_line.\n";
+            break;
+        }
         assert(err==0);
         bytes_read = getline(&line, &length, fin);
     }
+    std::free(line);
     std::cerr << "building whole annotation region map done\n";
     return err;
 }
