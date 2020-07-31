@@ -927,9 +927,8 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 		i++;
 		tok = strtok(nullptr, delim);
 	}
-    if(chrm == nullptr) throw std::runtime_error("chrm is missing?");
     //if we need to keep the order, then we'll store values here
-    int alen = keep_order?4:2;
+    const int alen = keep_order?4:2;
     T* coords = new T[alen];
     coords[0] = start;
     coords[1] = end;
@@ -973,9 +972,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     
 template <typename T>
 static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
-    if(!fin) throw std::runtime_error("fin is null");
     char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
-    if(!line) throw 2;
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
