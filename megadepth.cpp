@@ -27,19 +27,18 @@
 
 
 #define __STDC_FORMAT_MACROS
-#include <iostream>
-#include <vector>
-#include <cassert>
-#include <fstream>
-#include <sstream>
 #include <algorithm>
-#include <string>
+#include <cassert>
 #include <cerrno>
 #include <cstring>
-#include <unordered_map>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <thread>
-#include <math.h>
+
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 #include <sys/stat.h>
@@ -390,7 +389,7 @@ static void output_from_cigar_mdz(
     uint32_t *cigar = bam_get_cigar(rec);
     size_t mdzi = 0, seq_off = 0;
     int32_t ref_off = rec->core.pos;
-    for(int k = 0; k < rec->core.n_cigar; k++) {
+    for(unsigned int k = 0; k < rec->core.n_cigar; k++) {
         int op = bam_cigar_op(cigar[k]);
         int run = bam_cigar_oplen(cigar[k]);
         if((strchr("DNMX=", BAM_CIGAR_STR[op]) != nullptr) && mdzi >= mdz.size()) {
@@ -998,7 +997,7 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
 
 template <typename T>
 static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
-    long z, j;
+    unsigned long z, j;
     for(z = 0; z < annotations.size(); z++) {
         T sum = 0;
         T start = annotations[z][0];
@@ -1064,11 +1063,11 @@ static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn)
     }
     mean /= count;
     kmean /= kcount;
-    fprintf(outfn, "STAT\tCOUNT\t%lu\n", count);
+    fprintf(outfn, "STAT\tCOUNT\t%" PRIu64 "\n", count);
     fprintf(outfn, "STAT\tMEAN_LENGTH\t%.3f\n", mean);
-    fprintf(outfn, "STAT\tMODE_LENGTH\t%lu\n", mode);
-    fprintf(outfn, "STAT\tMODE_LENGTH_COUNT\t%lu\n", mode_count);
-    fprintf(outfn, "STAT\tKALLISTO_COUNT\t%lu\n", kcount);
+    fprintf(outfn, "STAT\tMODE_LENGTH\t%" PRIu64 "\n", mode);
+    fprintf(outfn, "STAT\tMODE_LENGTH_COUNT\t%" PRIu64 "\n", mode_count);
+    fprintf(outfn, "STAT\tKALLISTO_COUNT\t%" PRIu64 "\n", kcount);
     fprintf(outfn, "STAT\tKALLISTO_MEAN_LENGTH\t%.3f\n", kmean);
 }
             
@@ -1091,9 +1090,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
         fprintf(errfp, "Error in bwInit, exiting\n");
         return -1;
     }
-    char* fn_copy = new char[1024];
-    strcpy(fn_copy, fn);
-    bigWigFile_t *fp = bwOpen(fn_copy, NULL, "r");
+    bigWigFile_t *fp = bwOpen((char *)fn, NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return -1;
@@ -1116,6 +1113,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
         if(!iter->data)
         {
             fprintf(errfp, "WARNING: no intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+            goto next;
             continue;
         }
         while(iter->data)
@@ -1133,13 +1131,13 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
             }
             iter = bwIteratorNext(iter);
         }
+        next: // To ensure that we are destroying for cases where no intervals are available (1115)
+              // Could replace with RAII, but this is simpler and fits the style better
         bwIteratorDestroy(iter);
     }
 
     bwClose(fp);
     bwCleanup();
-    if(fn_copy);
-        delete(fn_copy);
     return 0;
 }
 
@@ -1154,8 +1152,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
         fprintf(errfp, "Error in bwInit, exiting\n");
         return -1;
     }
-    char* fn_copy = strdup(fn);
-    bigWigFile_t *fp = bwOpen(fn_copy, NULL, "r");
+    bigWigFile_t *fp = bwOpen((char *)fn, NULL, "r");
     if(!fp) {
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return -1;
@@ -1163,7 +1160,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
     void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
     if(SUMS_ONLY)
         printPtr = &print_shared_sums_only;
-    uint32_t i, tid, blocksPerIteration;
+    uint32_t tid, blocksPerIteration;
     //ask for huge # of blocks per chromosome to ensure we get all in one go
     //(this is for convenience, not performance)
     blocksPerIteration = 4000000;
@@ -1190,7 +1187,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             if(op == csum) {
                 if(num_intervals > intervals_seen.size())
                     intervals_seen.resize(num_intervals, false);
-                for(int i = 0; i < intervals_seen.size(); i++)
+                for(unsigned int i = 0; i < intervals_seen.size(); i++)
                     intervals_seen[i] = false;
             }
             uint32_t istart = iter->intervals->start[0];
@@ -1208,8 +1205,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     local_vals = new double[asz];
                 else
                     local_vals = (*store_local)[fp->cl->chrom[tid]];
-                for(int i = 0; i < asz; i++)
-                    local_vals[i] = 0.0;
+                std::fill(local_vals, local_vals + asz, 0.);
             }
             //loop through annotation intervals as outer loop
             for(z = 0; z < asz; z++) {
@@ -1274,15 +1270,15 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     case cmax:
                         value = max;
                         break;
+                    case csum:; // do nothing
                 }
                 //not trying to keep the order in the BED file, just print them as we find them
                 if(keep_order_idx == -1)
                     (*printPtr)(afp, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                else if(store_local)
+                    local_vals[z] = value;
                 else
-                    if(store_local)
-                        local_vals[z] = value;
-                    else
-                        az[keep_order_idx] = value;
+                    az[keep_order_idx] = value;
             }
             annotation_chrs_seen->insert(fp->cl->chrom[tid]);
             if(store_local)
@@ -1293,8 +1289,6 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
 
     bwClose(fp);
     bwCleanup();
-    if(fn_copy);
-        delete(fn_copy);
     return 0;
 }
 
@@ -1364,7 +1358,6 @@ template <typename T>
 void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strlist* chrm_order, int keep_order_idx, Op op) {
     //want to just get the filename itself, no path
     str2dblist store_local;
-    char* bwfn_copy;
     for(auto bwfn_ : bwfns) {
         strvec tokens;
         const char* bwfn = bwfn_.c_str();
@@ -2021,15 +2014,15 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fclose(afp);
     if(uafp)
         fclose(uafp);
-    fprintf(stderr,"Read %lu records\n",recs);
+    fprintf(stderr,"Read %" PRIu64 " records\n",recs);
     if(count_bases) {
-        fprintf(stdout,"%lu records passed filters\n",reads_processed);
-        fprintf(stdout,"%lu bases in alignments which passed filters\n",*((uint64_t*) maplen_outlist[0]));
+        fprintf(stdout,"%" PRIu64 " records passed filters\n",reads_processed);
+        fprintf(stdout,"%" PRIu64 " bases in alignments which passed filters\n",*((uint64_t*) maplen_outlist[0]));
         //fprintf(stdout,"%lu bases in alignments which passed filters\n",total_number_bases_processed);
     }
     if(softclip_file) {
-        fprintf(softclip_file,"%lu bases softclipped\n",total_softclip_count);
-        fprintf(softclip_file,"%lu total number of processed sequence bases\n",total_number_sequence_bases_processed);
+        fprintf(softclip_file,"%" PRIu64 " bases softclipped\n",total_softclip_count);
+        fprintf(softclip_file,"%" PRIu64 " total number of processed sequence bases\n",total_number_sequence_bases_processed);
         fclose(softclip_file);
     }
     return 0;
