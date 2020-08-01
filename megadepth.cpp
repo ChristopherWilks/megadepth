@@ -43,7 +43,20 @@
 #include <htslib/bgzf.h>
 #include <sys/stat.h>
 #include "bigWig.h"
-#include "robin_hood.h"
+#ifdef WINDOWS_MINGW
+    #include "getline.h"
+    #include "mingw-std-threads/mingw.thread.h"
+    template<class K, class V>
+    using hashmap = std::unordered_map<K, V>;
+    template<class V2>
+    using hashset = std::unordered_set<V2>;
+#else
+    #include "robin_hood.h"
+    template<class K, class V>
+    using hashmap = robin_hood::unordered_map<K, V>;
+    template<class V2>
+    using hashset = robin_hood::unordered_set<V2>;
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #  ifndef unlikely
@@ -66,9 +79,9 @@ uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 bool SUMS_ONLY = false;
 
 typedef std::vector<std::string> strvec;
-//typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
-typedef robin_hood::unordered_map<std::string, uint64_t> mate2len;
-typedef robin_hood::unordered_map<std::string, double*> str2dblist;
+//typedef hashmap<std::string, uint64_t> mate2len;
+typedef hashmap<std::string, uint64_t> mate2len;
+typedef hashmap<std::string, double*> str2dblist;
 
 uint64_t MAX_INT = (2^63);
 //how many intervals to start with for a chromosome in a BigWig file
@@ -569,7 +582,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 //used for buffering up text/gz output
 int OUT_BUFF_SZ=4000000;
 int COORD_STR_LEN=34;
-typedef robin_hood::unordered_map<uint32_t,uint32_t> int2int;
+typedef hashmap<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
                         const uint32_t* arr, 
@@ -692,8 +705,8 @@ static const int32_t align_length(const bam1_t *rec) {
     return bam_endpos(rec) - rec->core.pos;
 }
 
-typedef robin_hood::unordered_map<std::string, char*> str2cstr;
-typedef robin_hood::unordered_map<std::string, int> str2int;
+typedef hashmap<std::string, char*> str2cstr;
+typedef hashmap<std::string, int> str2int;
 typedef std::vector<uint32_t> coords;
 static void extract_junction(const int op, const int len, args_list* out) {
     uint32_t* base = (uint32_t*) (*out)[0];
@@ -711,7 +724,7 @@ static void extract_junction(const int op, const int len, args_list* out) {
 }
 
 
-typedef robin_hood::unordered_map<std::string, uint32_t*> read2len;
+typedef hashmap<std::string, uint32_t*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
                                         uint32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
@@ -901,10 +914,10 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     return algn_end_pos;
 }
 
-//typedef robin_hood::unordered_map<std::string, std::vector<long*>*> annotation_map_t;
-//typedef robin_hood::unordered_map<std::string, std::vector<void*>*> annotation_map_t;
+//typedef hashmap<std::string, std::vector<long*>*> annotation_map_t;
+//typedef hashmap<std::string, std::vector<void*>*> annotation_map_t;
 template <typename T>
-using annotation_map_t = robin_hood::unordered_map<std::string, std::vector<T*>>;
+using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
@@ -1037,7 +1050,7 @@ static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn
 }
 
 int KALLISTO_MAX_FRAG_LENGTH = 1000;
-typedef robin_hood::unordered_map<int32_t, uint32_t> fraglen2count;
+typedef hashmap<int32_t, uint32_t> fraglen2count;
 static void print_frag_distribution(const fraglen2count* frag_dist, FILE* outfn) 
 {
     double mean = 0.0;
@@ -1141,9 +1154,9 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 }
 
 
-using chr2bool = robin_hood::unordered_set<std::string>;
+using chr2bool = hashset<std::string>;
 enum Op { csum, cmean, cmin, cmax };
-typedef robin_hood::unordered_map<std::string, int> str2op;
+typedef hashmap<std::string, int> str2op;
 template <typename T>
 static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
@@ -1409,7 +1422,7 @@ Op get_operation(const char* opstr) {
 }
 
 
-typedef robin_hood::unordered_map<std::string, uint8_t*> str2str;
+typedef hashmap<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
