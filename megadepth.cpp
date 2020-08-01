@@ -44,6 +44,8 @@
 #include <sys/stat.h>
 #include "bigWig.h"
 #ifdef WINDOWS_MINGW
+    #include <unordered_map>
+    #include <unordered_set>
     #include "getline.h"
     #include "mingw-std-threads/mingw.thread.h"
     template<class K, class V>

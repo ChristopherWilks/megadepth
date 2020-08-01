@@ -45,7 +45,7 @@ if [[ ! -s htslib_windows ]] ; then
 fi
 
 if [[ ! -s libBigWig_windows ]] ; then
-    ./get_libBigWig.sh
+    ./get_libBigWig.sh windows
     pushd libBigWig_windows
     export CFLAGS="-I../libcurl_windows/include -I../zlib_windows -g -Wall -O3 -Wsign-compare -DCURL_STATICLIB"
     make clean
@@ -59,7 +59,8 @@ set -x
 DR=build-release-temp
 mkdir -p ${DR}
 pushd ${DR}
-cmake CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB -DCMAKE_BUILD_TYPE=Release ..
+MD_VER=`cat ../VERSION`
+cmake -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_CXX_FLAGS="-std=c++11 -DCURL_STATICLIB -DMEGADEPTH_VERSION=$MD_VER -DWINDOWS_MINGW"  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}.exe
 popd
 cp ${DR}/${bc}.exe ./megadepth.exe
