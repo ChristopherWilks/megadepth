@@ -2,43 +2,54 @@
 
 set -ex
 
-#e.g. i386-apple-darwin1 (CC=o32-gcc)
-#or x86_64-apple-darwin12-gcc (CC=o64-gcc)
-#CC must be set as well
-xcross=$1
+#macos:
+#   x86_64-apple-darwin12-gcc (CC=o64-gcc)
+#OR
+#   i386-apple-darwin1 (CC=o32-gcc)
+#windows:
+#   x86_64-w64-mingw32 (64bit)
+#OR
+#   i686-w64-mingw32 (32bit)
 
-export CPPFLAGS="-I../libdeflate"
-export LDFLAGS="-L../libdeflate -ldeflate"
+compiler=$1
+#"macos" or "windows" (or nothing for normal linux build)
+platform=$2
 
-VER=1.9
+target_dir=htslib
+if [[ -n $platform ]]; then
+    target_dir="htslib_"${platform}
+fi
+
+#VER=1.9
+VER=1.10.2
 AR=htslib-${VER}.tar.bz2
-if [[ ! -s htslib ]] ; then
+if [[ ! -s $target_dir ]] ; then
     curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${AR}
     bzip2 -dc ${AR} | tar xvf - 
     rm -f ${AR}
-    pushd htslib-${VER}
-    MOVE=1
-else
-    pushd htslib
+    mv htslib-${VER} $target_dir
 fi
+pushd $target_dir
+
 autoheader
 autoconf
 make clean
-if [[ -z $xcross ]]; then
+
+if [[ -z $compiler ]]; then
     ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate
     make
 else
-    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate --host=$xcross
-    #only make static lib for cross-compilation for now
-    export AR=/opt/osxcross/target/bin/x86_64-apple-darwin12-ar
-    export RANLIB=/opt/osxcross/target/bin/x86_64-apple-darwin12-ranlib
-    cp Makefile Makefile.orig
-    cat Makefile.orig | perl -ne 'chomp; $f=$_; $f=~s!^(AR\s*=\s*ar\s*)$!AR='$AR'!; $f=~s!^(RANLIB\s*=\s*ar\s*)$!AR='$RANLIB'!; print "$f\n";' > Makefile
-    make libhts.a
+    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate --host=$compiler
+    if [[ "$platform" == "macos" ]]; then
+        #only make static lib for cross-compilation for now
+        export CC=/opt/osxcross/target/bin/${compiler}-gcc
+        export AR=/opt/osxcross/target/bin/${compiler}-ar
+        export RANLIB=/opt/osxcross/target/bin/${compiler}-ranlib
+    else # windows
+        export CC=${compiler}-gcc
+        export AR=${compiler}-ar
+        export RANLIB=${compiler}-ranlib
+    fi
+    make CC=$CC AR=$AR RANLIB=$RANLIB libhts.a
 fi
-
 popd
-
-if [[ -n "$MOVE" ]]; then
-    mv htslib-${VER} htslib
-fi
