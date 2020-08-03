@@ -30,7 +30,7 @@ target_link_libraries(megadepth_statlib ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CM
 #set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DCURL_STATICLIB")
 add_executable(megadepth_static.exe megadepth.cpp getline.c)
-include_directories(megadepth_static.exe libcurl_windows/include zlib_windows)
+include_directories(megadepth_static.exe libcurl_windows/include zlib_windows htslib_windows libBigWig_windows)
 #set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
 
 target_link_libraries(megadepth_static.exe -static ${CMAKE_SOURCE_DIR}/htslib_windows/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig_windows/libBigWig.a ${CMAKE_SOURCE_DIR}/libdeflate_windows/libdeflate.a ${CMAKE_SOURCE_DIR}/libcurl_windows/lib/libcurl.a ${CMAKE_SOURCE_DIR}/nghttp2/lib/libnghttp2.a ${CMAKE_SOURCE_DIR}/openssl/lib/libssl.a ${CMAKE_SOURCE_DIR}/openssl/lib/libcrypto.a ${CMAKE_SOURCE_DIR}/libssh2/lib/libssh2.a ${CMAKE_SOURCE_DIR}/brotli/lib/libbrotlidec-static.a ${CMAKE_SOURCE_DIR}/brotli/lib/libbrotlicommon-static.a ${CMAKE_SOURCE_DIR}/zlib_windows/libz.a -lcrypt32 -lwldap32 -pthread -lwsock32 -lws2_32)
