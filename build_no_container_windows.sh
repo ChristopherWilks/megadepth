@@ -63,5 +63,5 @@ MD_VER=`cat ../VERSION`
 cmake -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCMAKE_CXX_FLAGS="-std=c++11 -DCURL_STATICLIB -DMEGADEPTH_VERSION=$MD_VER -DWINDOWS_MINGW"  -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}.exe
 popd
-cp ${DR}/${bc}.exe ./megadepth.exe
+cp ${DR}/${bc}.exe.exe ./megadepth.exe
 rm -rf ${DR}
