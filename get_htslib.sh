@@ -3,7 +3,7 @@
 set -ex
 
 #macos:
-#   x86_64-apple-darwin12-gcc (CC=o64-gcc)
+#   x86_64-apple-darwin12 (CC=o64-gcc)
 #OR
 #   i386-apple-darwin1 (CC=o32-gcc)
 #windows:
@@ -22,11 +22,11 @@ fi
 
 #VER=1.9
 VER=1.10.2
-AR=htslib-${VER}.tar.bz2
+ar=htslib-${VER}.tar.bz2
 if [[ ! -s $target_dir ]] ; then
-    curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${AR}
-    bzip2 -dc ${AR} | tar xvf - 
-    rm -f ${AR}
+    curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${ar}
+    bzip2 -dc ${ar} | tar xvf - 
+    rm -f ${ar}
     mv htslib-${VER} $target_dir
 fi
 pushd $target_dir
@@ -41,10 +41,14 @@ if [[ -z $compiler ]]; then
 else
     ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate --host=$compiler
     if [[ "$platform" == "macos" ]]; then
+        #inherit CC, AR, and RANLIB from build_no_container_xcross.sh
+        echo $CC
+        echo $AR
+        echo $RANLIB
         #only make static lib for cross-compilation for now
-        export CC=/opt/osxcross/target/bin/${compiler}-gcc
-        export AR=/opt/osxcross/target/bin/${compiler}-ar
-        export RANLIB=/opt/osxcross/target/bin/${compiler}-ranlib
+        #export CC=/opt/osxcross/target/bin/${compiler}-gcc
+        #export AR=/opt/osxcross/target/bin/${compiler}-ar
+        #export RANLIB=/opt/osxcross/target/bin/${compiler}-ranlib
     else # windows
         export CC=${compiler}-gcc
         export AR=${compiler}-ar

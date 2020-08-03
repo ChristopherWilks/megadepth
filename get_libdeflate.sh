@@ -28,7 +28,7 @@ else
         make CC=${compiler}-gcc CFLAGS='-O3' libdeflatestatic.lib
         ln -fs libdeflatestatic.lib libdeflate.a
     else
-        make CC==${compiler}-gcc CFLAGS='-fPIC -O3' $target
+        make CC=${compiler}-gcc CFLAGS='-fPIC -O3' $target
     fi
 fi
 popd

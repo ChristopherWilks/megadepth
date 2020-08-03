@@ -12,54 +12,37 @@ export CC=${OSX_CC}
 export CXX=${OSX_CXX}
 export AR=${OSXCROSS_ROOT}/$OSX_ARCH-apple-darwin${APPLE_VER}-ar
 export RANLIB=${OSXCROSS_ROOT}/$OSX_ARCH-apple-darwin${APPLE_VER}-ranlib
+export compiler=$OSX_ARCH-apple-darwin${APPLE_VER}
 
-#build dynamic by default
-build_type=$1
-bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } elsif($bt=~/statlib/i) { print "megadepth_statlib"; } else { print "megadepth_dynamic"; }'`
+#only build statlib for macos, no static support:
+#see https://stackoverflow.com/questions/5259249/creating-static-mac-os-x-c-build
+bc=megadepth_statlib
 
-if [[ ! -s libdeflate ]] ; then
-    ./get_libdeflate.sh
+if [[ ! -s libdeflate_macos ]] ; then
+    ./get_libdeflate.sh $compiler macos
+    ln -fs libdeflate_macos libdeflate
 fi
 
-if [[ ! -e htslib/libhts.a ]] ; then
-    export CPPFLAGS="-I../libdeflate"
-    export LDFLAGS="-L../libdeflate -ldeflate"
-    ./get_htslib.sh $OSX_ARCH-apple-darwin${APPLE_VER}-gcc
-    export CPPFLAGS=
-    export LDFLAGS=
+export CFLAGS="-I../libdeflate"
+export LDFLAGS="-L../libdeflate -ldeflate"
+if [[ ! -e htslib_macos/libhts.a ]] ; then
+    ./get_htslib.sh $compiler macos
+    ln -fs htslib_macos htslib
 fi
 
-if [[ ! -s libBigWig ]] ; then
-    ./get_libBigWig.sh
-fi
-
-set -x
-
-#compile a no-curl static version of libBigWig
-if [[ $bc == 'megadepth_static' ]]; then
-    pushd libBigWig
-    make clean
-    make -f Makefile.nocurl lib-static
-    popd
-fi
-
-#compile a position indenpendent code static version of libBigWig
-#but *with* curl calls present, to be resolved later in the
-#dynamic linking of megadepth
-if [[ $bc == 'megadepth_statlib' ]]; then
+if [[ ! -s libBigWig_macos ]] ; then
+    ./get_libBigWig.sh macos
+    ln -fs libBigWig_macos libBigWig
     pushd libBigWig
     make clean
     make -f Makefile.fpic lib-static
     popd
 fi
 
-#compile a the original, dynamic version of libBigWig
-if [[ $bc == 'megadepth_dynamic' ]]; then
-    pushd libBigWig
-    make clean
-    make -f Makefile.orig lib-shared
-    popd
-fi
+export CFLAGS=
+export LDFLAGS=
+
+set -x
 
 export LD_LIBRARY_PATH=./htslib:./libBigWig:$LD_LIBRARY_PATH
 
