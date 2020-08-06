@@ -31,15 +31,15 @@ if [[ ! -s $target_dir ]] ; then
 fi
 pushd $target_dir
 
-autoheader
-autoconf
+#autoheader
+#autoconf
 make clean
 
 if [[ -z $compiler ]]; then
-    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate
+    ./configure --disable-bz2 --disable-lzma --with-libdeflate
     make
 else
-    ./configure --disable-bz2 --disable-lzma --disable-libcurl --with-libdeflate --host=$compiler
+    ./configure --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
     if [[ "$platform" == "macos" ]]; then
         #inherit CC, AR, and RANLIB from build_no_container_xcross.sh
         echo $CC
