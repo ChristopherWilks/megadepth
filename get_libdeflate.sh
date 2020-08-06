@@ -22,7 +22,7 @@ pushd $target_dir
 target="libdeflate.a"
 if [[ -z $compiler ]]; then
     #from https://github.com/samtools/htslib/issues/688
-    make CFLAGS='-fPIC -O3' $target
+    make CFLAGS="$CFLAGS -fPIC -O3" $target
 else
     if [[ "$platform" == "windows" ]]; then
         make CC=${compiler}-gcc CFLAGS='-O3' libdeflatestatic.lib
