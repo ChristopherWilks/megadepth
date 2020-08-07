@@ -603,9 +603,13 @@ static uint64_t print_array(const char* prefix,
     int total_line_len = chrnamelen + COORD_STR_LEN;
     int num_lines_per_buf = round(OUT_BUFF_SZ / total_line_len) - 3;
     //fprintf(stdout, "num_lines_per_buf %d\n", num_lines_per_buf);
-    char buf[OUT_BUFF_SZ];
     int buf_written = 0;
-    char* bufptr = buf;
+    char* buf = nullptr;
+    char* bufptr = nullptr;
+    if(!bwfp) {
+      buf = new char[OUT_BUFF_SZ];
+      bufptr = buf;
+    }
     //TODO: speed this up, maybe keep a separate vector
     //which tracks where the runs of the same value stop
     //then only loop through that one w/o the if's
