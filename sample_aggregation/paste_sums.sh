@@ -14,7 +14,8 @@ fi
 if [ -n "$dont_get_ids" ]; then
 #if set, we're doing a final paste of all previously pasted (or copied) sample groups so no need to handle sample IDs
     #for debugging, dont delete pasted intermediates
-    cat $manifest | perl -ne 'chomp; $f=$_; $s.=" $f"; $c++; END { if($c > 1) { print "paste $s\n"; `paste $s > '${output}'`; `rm $s`; } else { `cat $f > '${output}'`; }}'
+    cat $manifest | perl -ne 'chomp; $f=$_; $s.=" $f"; $c++; END { if($c > 1) { print "paste $s\n"; `paste $s > '${output}'`; } else { `cat $f > '${output}'`; }}'
+    #cat $manifest | perl -ne 'chomp; $f=$_; $s.=" $f"; $c++; END { if($c > 1) { print "paste $s\n"; `paste $s > '${output}'`; `rm $s`; } else { `cat $f > '${output}'`; }}'
     #cat $manifest | perl -ne 'chomp; $f=$_; $s.=" $f"; $c++; END { if($c > 1) { print "paste $s\n"; `paste $s > '${output}'`; `rm $s`; } else { `cat $f > '${output}'`; `rm $f`; }}'
 else
 #here we need to make sure we output the correct order of samples IDs as the column header
