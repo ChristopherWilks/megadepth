@@ -7,13 +7,10 @@ export CFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include -DCURL_STATICLIB 
 export LDFLAGS="-L/hbb_shlib/lib -static-libstdc++"
 export STATICLIB_CFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include -fPIC"
 
-#build dynamic by default
 build_type=$1
-bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } elsif($bt=~/statlib/i) { print "megadepth_statlib2"; } else { print "megadepth_dynamic"; }'`
+bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth_statlib2"; }'`
 
-#if [[ ! -s zlib ]] ; then
-#    ./get_zlib.sh
-#fi
+#dont need our own zlib, since it's already statically compiled in HBB
 
 if [[ ! -s libdeflate ]] ; then
     ./get_libdeflate.sh
@@ -23,15 +20,11 @@ if [[ ! -s htslib ]] ; then
     export CPPFLAGS="$CPPFLAGS -I../libdeflate"
     export LDFLAGS="$LDFLAGS -L../libdeflate -ldeflate"
     ./get_htslib.sh
-    #export CPPFLAGS=
-    #export LDFLAGS=
 fi
 
 if [[ ! -s libBigWig ]] ; then
     ./get_libBigWig.sh
     pushd libBigWig
-    #export CFLAGS="-I../libcurl_windows/include -I../zlib_windows -g -Wall -O3 -Wsign-compare -DCURL_STATICLIB"
-    #export CFLAGS="$CFLAGS -DCURL_STATICLIB"
     make clean
     make -f Makefile.fpic lib-static
     popd
@@ -51,6 +44,8 @@ cp ${DR}/${bc} ./
 ln -fs ./$bc megadepth
 ./megadepth --version
 rm -rf ${DR}
+mv megadepth_statlib2 megadepth_statlib2.full
+strip -s megadepth_statlib2.full -o megadepth_statlib2
 
 DR=build-debug-temp
 mkdir -p ${DR}
