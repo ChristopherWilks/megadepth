@@ -16,7 +16,7 @@ compiler=$1
 platform=$2
 
 target_dir=htslib
-if [[ -n $platform ]]; then
+if [[ -n $platform && "$platform" != "hbb" ]]; then
     target_dir="htslib_"${platform}
 fi
 
@@ -35,8 +35,11 @@ pushd $target_dir
 #autoconf
 make clean
 
-if [[ -z $compiler ]]; then
-    ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+if [[ "$compiler" == "linux" ]]; then
+    ./configure --disable-bz2 --disable-lzma --with-libdeflate
+    if [[ "$platform" == "hbb" ]]; then
+        ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+    fi
     make libhts.a
 else
     ./configure --enable-plugins --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler

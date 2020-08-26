@@ -24,7 +24,7 @@ if [[ ! -s htslib ]] ; then
     #for staticlly linking libcurl
     export LDFLAGS="-static-libstdc++ -L/hbb_shlib/lib -L../libdeflate"
     export LIBS="-lm -ldl -lssl -lcrypto -lz -ldeflate -lrt -pthread"
-    ./get_htslib.sh
+    ./get_htslib.sh linux hbb
     export CPPFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include"
     export LDFLAGS="-L/hbb_shlib/lib -static-libstdc++"
     export LIBS=

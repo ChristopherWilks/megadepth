@@ -17,7 +17,7 @@ fi
 if [[ ! -s htslib ]] ; then
     export CPPFLAGS="-I../libdeflate"
     export LDFLAGS="-L../libdeflate -ldeflate"
-    ./get_htslib.sh
+    ./get_htslib.sh linux
     export CPPFLAGS=
     export LDFLAGS=
 fi
