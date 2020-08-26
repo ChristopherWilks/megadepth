@@ -36,7 +36,7 @@ pushd $target_dir
 make clean
 
 if [[ "$compiler" == "linux" ]]; then
-    ./configure --disable-bz2 --disable-lzma --with-libdeflate
+    ./configure --disable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
     if [[ "$platform" == "hbb" ]]; then
         ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
     fi
