@@ -2119,7 +2119,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
 
 int get_file_format_extension(const char* fname) {
     int slen = strlen(fname);
-    if(strcmp("bam", &(fname[slen-3])) == 0 || strcmp("sam", &(fname[slen-3])) == 0)
+    if(strcmp("bam", &(fname[slen-3])) == 0 || strcmp("sam", &(fname[slen-3])) == 0 || strcmp("cram", &(fname[slen-4])) == 0)
         return BAM_FORMAT;
     if(strcmp("bw", &(fname[slen-2])) == 0
             || strcmp("BW", &(fname[slen-2])) == 0

@@ -36,10 +36,10 @@ pushd $target_dir
 make clean
 
 if [[ -z $compiler ]]; then
-    ./configure --disable-bz2 --disable-lzma --with-libdeflate
-    make
+    ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+    make libhts.a
 else
-    ./configure --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
+    ./configure --enable-plugins --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
     if [[ "$platform" == "macos" ]]; then
         #inherit CC, AR, and RANLIB from build_no_container_xcross.sh
         echo $CC
