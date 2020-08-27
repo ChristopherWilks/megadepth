@@ -19,7 +19,7 @@ https://quay.io/repository/broadsword/megadepth?tab=tags
 You'll probably want to map in a directory on the host system into the container via the `-v` option so you can pass an annotation file in and get output back:
 
 ```
-docker run -v `pwd`:/data <image_id> </path/or/URL/to/input/BAM/or/BigWig> --annotation /data/<annotation>.bed /data/output_file_prefix
+docker run -v `pwd`:/data <image_id> </path/or/URL/to/input/BAM/or/BigWig> --annotation /data/<annotation>.bed --prefix /data/output_file_prefix
 ```
 
 Currently, `libcurl` throws a warning about version information, this can be ignored.
