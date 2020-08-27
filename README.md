@@ -82,6 +82,8 @@ Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` o
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
 
+Also, anytime `--coverage`, no matter what other options are present (or no present), it will report the relevant AUC(s).
+
 ### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout --prefix <output_file_prefix>`
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
