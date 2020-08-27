@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -xe
 
+static=$1
+
 rm -f test.bam.auc.tsv test.bam.annotation.tsv test.bam.unique.tsv test.bam.frags.tsv test.bam.alts.tsv test.bam.softclip.tsv
 
-time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
-#time ./md_runner tests/test.bam --prefix test.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
+if [[ -z $static ]]; then
+    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
+else
+    time ./md_runner tests/test.bam --prefix test.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout > test_run_out 2>&1
+fi
 
 diff <(sort tests/test.bam.orig.frags.tsv) <(sort test.bam.frags.tsv)
 diff tests/test.bam.orig.alts.tsv test.bam.alts.tsv
@@ -60,8 +65,10 @@ diff tests/test3.auc.out.tsv test3.auc.tsv
 diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
 
 #test bigwig2sum on remote BW
-time ./md_runner http://stingray.cs.jhu.edu/data/temp/megadepth.test.bam.all.bw --op mean --annotation tests/testbw2.bed --prefix bw2.remote.mean --no-annotation-stdout >> test_run_out 2>&1
-diff bw2.remote.mean.annotation.tsv tests/testbw2.bed.mean
+if [[ -z $static ]]; then
+    time ./md_runner http://stingray.cs.jhu.edu/data/temp/megadepth.test.bam.all.bw --op mean --annotation tests/testbw2.bed --prefix bw2.remote.mean --no-annotation-stdout >> test_run_out 2>&1
+    diff bw2.remote.mean.annotation.tsv tests/testbw2.bed.mean
+fi
 
 ##only print sums use different order in BED file from what's in BW to test keep_order == true
 time ./md_runner test.bam.all.bw --sums-only --annotation tests/testbw2.bed --auc --prefix test.bam.bw2 > test.bam.bw2.annotation.tsv
