@@ -63,26 +63,24 @@ megadepth SRR1258218.bw
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
 
-Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
+Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw` (not supported on Windows at this time).
 If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
-### `megadepth /path/to/bamfile --auc <output_file_prefix>`
+### `megadepth /path/to/bamfile --auc --prefix <output_file_prefix>`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
  * `min-unique-qual` only for reads with MAPQ >= to this setting
  * `--annotation`: only for bases in the annotated regions
+It will write the output to `<output_file_prefix>.auc.tsv`.
  
 This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
 
 ### `megadepth /path/to/bamfile --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
-Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
+Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs to `STDOUT`.
 
-### `megadepth /path/to/bamfile --coverage --min-unique-qual <qual_value>`
-
-In addition to producing coverage output for all reads, will also produce coverage output only for reads which have a mapping quality (MAPQ) >= <qual_value> (typically set to `10`.  
 
 ### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> <output_file_prefix>`
 
