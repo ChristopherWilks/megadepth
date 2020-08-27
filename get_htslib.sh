@@ -36,11 +36,13 @@ pushd $target_dir
 make clean
 
 if [[ "$compiler" == "linux" ]]; then
-    ./configure --disable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
     if [[ "$platform" == "hbb" ]]; then
         ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+        make libhts.a
+    else
+        ./configure --disable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+        make
     fi
-    make libhts.a
 else
     ./configure --enable-plugins --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
     if [[ "$platform" == "macos" ]]; then
