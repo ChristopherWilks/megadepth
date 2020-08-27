@@ -6,11 +6,11 @@ BigWig and BAM related utilities.
 
 We strongly recommend use of one of the pre-compiled binaries for x86_64 linux systems:
 
-* [dynamically linked binary with HTSlib & libBigWig statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.3/megadepth)
+* [dynamically linked binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.4/megadepth)
 
-* [statically linked binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.3/megadepth_static)
+* [statically linked binary](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.4/megadepth_static)
 
-NOTE: the statically linked binary does not support remote BigWig processing due to the difficulties in linking a static libcurl, but may still be useful for those who want to do local processing on systems where the dynamic binary doesn't work.
+NOTE: the statically linked binary does not support remote BigWig/BAM processing due to the difficulties in linking a static libcurl, but may still be useful for those who want to do local processing on systems where the dynamic binary doesn't work.
 
 There is also a Docker image that can be used to run `megadepth`:
 
@@ -34,23 +34,23 @@ Finally, if none of those options work, the build instructions are at the end of
 While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
 
 ```
-megadepth /path/to/bamfile --threads <num_threads> --no-head --coverage --bigwig <sample_name> --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> <sample_name> --frag-dist <sample_name> --alts <sample_name>
+megadepth /path/to/bamfile --threads <num_threads> --no-head --bigwig --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> --frag-dist --alts --prefix <sample_name>
 ```
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 
 ```
-megadepth SRR1258218.sorted.bam --threads 4 --no-head --coverage --bigwig SRR1258218 --auc SRR1258218 --min-unique-qual 10 --annotation exons.bed SRR1258218 --frag-dist SRR1258218 --alts SRR1258218
+megadepth SRR1258218.sorted.bam --threads 4 --no-head --bigwig --auc --min-unique-qual 10 --annotation exons.bed --frag-dist --alts --prefix SRR1258218
 ```
 
 ### BigWig Processing
 ```
-megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> <sample_name> --op <operation_over_annotated_intervals>
+megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> --op <operation_over_annotated_intervals>
 ```
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq), this will produce 1) means for the intervals listed in `exons.bed` and 2) the total annotated AUC (output `STDOUT`):
 ```
-megadepth SRR1258218.bw --annotation exons.bed SRR1258218 --op mean
+megadepth SRR1258218.bw --annotation exons.bed--op mean
 ```
 
 Or if you only want the AUC for the whole BigWig:
@@ -58,14 +58,13 @@ Or if you only want the AUC for the whole BigWig:
 megadepth SRR1258218.bw
 ```
 
-
 ## BAM Processing Subcommands
 
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
 
-Subcommand `--coverage` is the only subcommand that will output a BigWig file (currently).
-However, if along with `--coverage`, `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written as a BigWig file.
+Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
+If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
 ### `megadepth /path/to/bamfile --auc <output_file_prefix>`
 
