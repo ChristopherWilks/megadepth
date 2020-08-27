@@ -36,13 +36,13 @@ For any remote file processing, either BAM or BigWigs, you must use the `--prefi
 While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
 
 ```
-megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> --frag-dist --alts --prefix <output_file_prefix>
+megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --annotation <annotated_intervals.bed> --prefix <output_file_prefix>
 ```
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 
 ```
-megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation exons.bed --frag-dist --alts --prefix SRR1258218
+megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --annotation exons.bed --prefix SRR1258218
 ```
 
 ### BigWig Processing
