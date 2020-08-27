@@ -34,7 +34,7 @@ Finally, if none of those options work, the build instructions are at the end of
 While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
 
 ```
-megadepth /path/to/bamfile --threads <num_threads> --no-head --bigwig --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> --frag-dist --alts --prefix <sample_name>
+megadepth /path/to/bamfile --threads <num_threads> --no-head --bigwig --auc --min-unique-qual <min_qual> --annotation <annotated_intervals.bed> --frag-dist --alts --prefix <output_file_prefix>
 ```
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
@@ -63,46 +63,49 @@ megadepth SRR1258218.bw
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
 
-Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw` (not supported on Windows at this time).
+Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
 If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
-### `megadepth /path/to/bamfile --auc --prefix <output_file_prefix>`
+### `megadepth /path/to/bamfile --auc <output_file_prefix>`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
  * `min-unique-qual` only for reads with MAPQ >= to this setting
  * `--annotation`: only for bases in the annotated regions
-It will write the output to `<output_file_prefix>.auc.tsv`.
  
 This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
 
 ### `megadepth /path/to/bamfile --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
-Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs to `STDOUT`.
+Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
+Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
 
-### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> <output_file_prefix>`
+### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout --prefix <output_file_prefix>`
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
-If `--min-unique-qual` is submitted, this will produce a second set of sums for the "unique" reads that pass this filter.
 
 The annotation BED file does not need to be sorted in any particular way.
 
 megadepth will output the summed coverages for the annotation in contiguous blocks per chromosome.
 
 This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
+
+It's best to use the command as given, otherwise both the coverage and annotated coverage output will be reported intermingled to `STDOUT`.
+
+Will default to reporting to `STDOUT` unless `--no-annoation-stdout` is passed in.
  
 ### `megadepth /path/to/bamfile --coverage --double-count`
 
 By default, `megadepth --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
-### `megadepth /path/to/bamfile --coverage --bigwig <output_file_prefix>`
+### `megadepth /path/to/bamfile --coverage --bigwig --prefix <output_file_prefix>`
 
 Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
 
-### `megadepth /path/to/bamfile --frag-dist <output_file_prefix>`
+### `megadepth /path/to/bamfile --frag-dist`
 
 Outputs fragment length distribution adjusting for intron lengths.
 
@@ -125,7 +128,9 @@ Intron length(s) in the paired alignments are also subtracted from the `TLEN` fi
 
 These numbers should be taken as an estimation of the fragment length distribtion.
 
-### `megadepth /path/to/bamfile --alts <output_file_prefix>`
+Reports to a file with suffix `.frags.tsv`.
+
+### `megadepth /path/to/bamfile --alts`
 
 Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
@@ -157,7 +162,9 @@ of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
 specified.
 
-### `megadepth /path/to/bamfile --alts --include-softclip <output_file_prefix>`
+Reports to a file with suffix `.alts.tsv`.
+
+### `megadepth /path/to/bamfile --alts --include-softclip`
 
 In addition to the alternate base output, this reports the bases
 that were softclipped at the ends (start/end) of the read.
@@ -173,7 +180,9 @@ Warning: using this option w/o modifiers (e.g. `--only-polya`)
 could blow up the `--alts` output size as the full softclipped
 sequence is printed in the 4th column in the table above ("Extra info").
 
-### `megadepth /path/to/bamfile --alts --include-softclip <output_file_prefix> --only-polya`
+Reports to a file with suffix `.softclip.tsv` in addition to the `--alts` file.
+
+### `megadepth /path/to/bamfile --alts --include-softclip --only-polya`
 
 If reporting softclipped bases, this option will limit the report to only
 those bases that have the following:
@@ -195,7 +204,7 @@ Output is comma separated with 7 fields:
 | 6     | Base (A/T)                                                                       |
 | 7     | Count of the base in column 6                                                    |
 
-### `megadepth /path/to/bamfile --junctions <output_file_prefix>`
+### `megadepth /path/to/bamfile --junctions`
 
 Extract locally co-occurring junctions from BAM.
 
@@ -226,6 +235,8 @@ If you get a core dump when running on longer reads (e.g. BAM's produced by PacB
 then try adding the argument `--long-reads` as it will enlarge the buffer used to store the output junction string.
 
 This enables megadepth to have a better chance of handling really long CIGAR strings.
+
+Reports to a file with suffix `.jxs.tsv`.
 
 ## Build dependencies
 
