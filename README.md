@@ -141,7 +141,7 @@ Output is comma separated with 4 fields:
 
 | Pos   |                                            Descrtiption |
 |-------|---------------------------------------------------------|
-| 1     | Reference record ID                                     |
+| 1     | Reference/chromosome ID in the BAM file (integer)       |
 | 2     | POS field (0-based offset of leftmost aligned ref base) |
 | 3     | Operation label (see table below)                       |
 | 4     | Extra info (see table below)                            |
