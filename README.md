@@ -200,7 +200,7 @@ Output is comma separated with 7 fields:
 
 | Pos   |                                                                      Description|
 |-------|----------------------------------------------------------------------------------|
-| 1     | Reference record ID                                                              |
+| 1     | Reference/chromosome ID in the BAM file (integer)                                |
 | 2     | POS field (0-based ref offset of either leftmost or rightmost aligned base)      |
 | 3     | Operation label (always "S")                                                     |
 | 4     | Number of bases in the softclip (run length)                                     |
@@ -220,7 +220,7 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 
 | Pos    |                                                                            Description|
 |--------|---------------------------------------------------------------------------------------|
-| 1      | Reference record ID                                                                   |
+| 1      | Reference/chromosome ID in the BAM file (integer)                                     |
 | 2      | POS field (1-based ref offset of either leftmost base)                                |
 | 3      | Mapping strand (0 forward, 1 reverse)                                                 |
 | 4      | Insert length (0 if not paired)                                                       |
