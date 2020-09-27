@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-set -e
+set -ex
+yum install cmake -yy
 
 export PATH=/opt/rh/devtoolset-8/root/usr/bin:$PATH
 export CFLAGS="-g -O2 -fvisibility=hidden -DCURL_STATICLIB -fPIC"
