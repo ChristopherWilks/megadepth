@@ -52,7 +52,7 @@ megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> --op <opera
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq), this will produce 1) means for the intervals listed in `exons.bed` and 2) the total annotated AUC (output `STDOUT`):
 ```
-megadepth SRR1258218.bw --annotation exons.bed--op mean
+megadepth SRR1258218.bw --annotation exons.bed --op mean --auc
 ```
 
 Or if you only want the AUC for the whole BigWig:
@@ -68,7 +68,7 @@ While any given subcommand may not be particularly fast on its own, doing them a
 Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
 If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
-### `megadepth /path/to/bamfile --auc <output_file_prefix>`
+### `megadepth /path/to/bamfile --auc`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
@@ -77,14 +77,14 @@ This will also report additional counts for:
  
 This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
 
+Will default to reporting to `STDOUT` unless `--no-auc-stdout` is passed in.
+
 ### `megadepth /path/to/bamfile --coverage`
 
 Generates per-base counts of overlapping reads across all of the genome.  
 Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
-
-Also, anytime `--coverage`, no matter what other options are present (or no present), it will report the relevant AUC(s).
 
 ### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout --prefix <output_file_prefix>`
 
@@ -98,7 +98,9 @@ This will be the same order as the BED file *if* coordinates from the same chrom
 
 It's best to use the command as given, otherwise both the coverage and annotated coverage output will be reported intermingled to `STDOUT`.
 
-Will default to reporting to `STDOUT` unless `--no-annoation-stdout` is passed in.
+Will default to reporting to `STDOUT` unless `--no-annotation-stdout` is passed in.
+
+Also, this no longer automatically reports the AUC, you'll also need to pass in `--auc` if you want that as well.
  
 ### `megadepth /path/to/bamfile --coverage --double-count`
 

@@ -116,6 +116,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                            if the 2nd is intended then a TXT file listing the paths to the BigWigs to process in parallel\n"
     "                            should be passed in as the main input file instead of a single BigWig file (EXPERIMENTAL).\n"
     "  --prefix                 String to use to prefix all output files.\n"
+    "  --no-auc-stdout          Force all AUC(s) to be written to <prefix>.auc.tsv rather than STDOUT\n"
     "  --no-annotation-stdout   Force summarized annotation regions to be written to <prefix>.annotation.tsv rather than STDOUT\n"
     "  --no-coverage-stdout     Force covered regions to be written to <prefix>.coverage.tsv rather than STDOUT\n"
     "  --keep-order             Output annotation coverage in the order chromosomes appear in the BAM/BigWig file\n"
@@ -136,6 +137,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "BAM Input:\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
+    "If only the name of the BAM file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
     "  --junctions          Extract jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
@@ -157,7 +159,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --coverage           Print per-base coverage (slow but totally worth it)\n"
     "  --auc                Print per-base area-under-coverage, will generate it for the genome\n"
     "                       and for the annotation if --annotation is also passed in\n"
-    "                       Writes to a TSV file <prefix>.auc.tsv\n"
+    "                       Defaults to STDOUT, unless other params are passed in as well, then\n"
+    "                       if writes to a TSV file <prefix>.auc.tsv\n"
     "  --bigwig             Output coverage as BigWig file(s).  Writes to <prefix>.bw\n"
     "                       (also <prefix>.unique.bw when --min-unique-qual is specified).\n"
     "                       Requires libBigWig.\n"
@@ -954,36 +957,8 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     coords[0] = start;
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
-    /*if(use_double) {
-        coords = new double[alen];
-        //coords[0] = start;
-        ((double*) coords)[0] = start;
-        ((double*) coords)[1] = end;
-        if(alen >= 4) {
-            ((double*) coords)[2] = 0.0;
-            ((double*) coords)[3] = 0.0;
-        }
-    }
-    else {
-        coords = new long[alen];
-        //coords[1] = end;
-        ((long*) coords)[0] = start;
-        ((long*) coords)[1] = end;
-        if(alen >= 4) {
-            ((long*) coords)[2] = 0;
-            ((long*) coords)[3] = 0;
-        }
-    }*/
     auto it = amap->find(chrm);
     if(it == amap->end()) {
-        //std::vector<void*>* v = new std::vector<long*>();
-        /*std::vector<void*>* v;
-        if(use_double) {
-            //delete(v);
-            v = new std::vector<double*>();
-        }
-        else
-            v = new std::vector<long*>();*/
         chrm_order->push_back(chrm);
         it = amap->emplace(chrm, std::vector<T*>()).first;
     }
@@ -1432,21 +1407,23 @@ typedef hashmap<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
+int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
-    int slen = strlen(bam_arg);
-    bool is_bw_list_file = strcmp(bam_arg+(slen-3), "txt") == 0;
-    fprintf(stderr,"filename:%s\n",bam_arg);
-    std::cerr << "Processing BigWig(s): \"" << bam_arg << "\"\t" << std::endl;
+    int slen = strlen(bw_arg);
+    bool is_bw_list_file = strcmp(bw_arg+(slen-3), "txt") == 0;
+    fprintf(stderr,"Processing %s\n",bw_arg);
+    fflush(stderr);
     //just do all/total AUC if no options are passed in
-    if(argc == 1 || (argc == 3 && default_BW_READ_BUFFER != BW_READ_BUFFER)) {
-        fflush(stderr);
+    if(argc == 1 
+            || (argc == 2 && has_option(argv, argv+argc, "--auc"))
+            || (argc == 3 && has_option(argv, argv+argc, "--bwbuffer"))
+            || (argc == 4 && has_option(argv, argv+argc, "--bwbuffer") && has_option(argv, argv+argc, "--auc"))) {
         //should be the same as "all_auc" except support possibility of continuous values
         //in the BigWig (but not in the BAM, since we control how we count)
         double total_auc = 0.0;
-        int ret = process_bigwig_for_total_auc(bam_arg, &total_auc);
+        int ret = process_bigwig_for_total_auc(bw_arg, &total_auc);
         if(ret == 0)
             fprintf(stdout, "AUC_ALL_BASES\t%.3f\n", total_auc);
         return ret;
@@ -1463,7 +1440,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
             files_per_thread[i] = new strvec();
             bytes_per_thread[i] = 0;
         }
-        FILE* bw_list_fp = fopen(bam_arg, "r");
+        FILE* bw_list_fp = fopen(bw_arg, "r");
         if(unlikely(bw_list_fp == nullptr)) assert(false);
         char *bwfn = (char *)std::malloc(LINE_BUFFER_LENGTH);
         size_t length = LINE_BUFFER_LENGTH;
@@ -1517,7 +1494,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         return 0; 
     }
     //don't have a list of BigWigs, so just process the single one
-    int ret = process_bigwig(bam_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
+    int ret = process_bigwig(bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
     //if we wanted to keep the chromosome order of the annotation output matching the input BED file
     if(keep_order)
         output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
@@ -1525,7 +1502,7 @@ int go_bw(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_
         output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
     if(afp && afp != stdout)
         fclose(afp);
-    if(ret == 0)
+    if(ret == 0 && auc_file)
         fprintf(auc_file, "AUC_ANNOTATED_BASES\t%.3f\n", annotated_total_auc);
     if(auc_file && auc_file != stdout)
         fclose(auc_file);
@@ -1539,13 +1516,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     uint64_t unique_auc = 0;
     uint64_t annotated_auc = 0;
     uint64_t unique_annotated_auc = 0;
-    bool unique = has_option(argv, argv+argc, "--min-unique-qual");
-    FILE* uafp = nullptr;
-    if(unique) {
-        char afn[1024];
-        sprintf(afn, "%s.unique.tsv", prefix);
-        uafp = fopen(afn, "w");
-    }
 
     std::cerr << "Processing BAM: \"" << bam_arg << "\"" << std::endl;
 
@@ -1621,12 +1591,15 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     //  even if --coverage is also passed in
     //--auc -> output AUC of coverage (compute_coverage=true)
     //--annotation output annotated regions of coverage (compute_coverage=true)
-    bool auc_opt = has_option(argv, argv+argc, "--auc");
+    bool auc_opt = has_option(argv, argv+argc, "--auc") || argc == 1;
     bool coverage_opt = has_option(argv, argv+argc, "--coverage");
     bool annotation_opt = has_option(argv, argv+argc, "--annotation");
     bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
     bool dont_output_coverage = !(coverage_opt || bigwig_opt);
     FILE* cov_fh = stdout;
+    
+    bool unique = has_option(argv, argv+argc, "--min-unique-qual");
+    FILE* uafp = nullptr;
     if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -1635,6 +1608,14 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
         }
         if(unique) {
+            if(annotation_opt) {
+                uafp = stdout;
+                if(has_option(argv, argv+argc, "--no-annotation-stdout")) {
+                    char afn[1024];
+                    sprintf(afn, "%s.unique.tsv", prefix);
+                    uafp = fopen(afn, "w");
+                }
+            }
             if(bigwig_opt)
                 ubwfp = create_bigwig_file(hdr, prefix, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
@@ -2102,12 +2083,19 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
         assert(!annotations.empty());
         std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
     }
-    
-    FILE* auc_file = stdout;
-    if(has_option(argv, argv+argc, "--auc")) {
-        char afn[1024];
-        sprintf(afn, "%s.auc.tsv", prefix);
-        auc_file = fopen(afn, "w");
+    //if no args are passed in other than a file (BAM or BW)
+    //then just compute the auc 
+    FILE* auc_file = nullptr;
+    //if we 1) have no params OR 2) we have no params but --bwbuffer OR 3) --auc with/wo any other options
+    if(argc == 1 
+            || has_option(argv, argv+argc, "--auc")
+            || (argc == 3 && has_option(argv, argv+argc, "--bwbuffer"))) {
+    	auc_file = stdout;
+        if(has_option(argv, argv+argc, "--no-auc-stdout")) {
+            char afn[1024];
+            sprintf(afn, "%s.auc.tsv", prefix);
+            auc_file = fopen(afn, "w");
+        }
     }
 
     assert(err == 0);
