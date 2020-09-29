@@ -21,7 +21,8 @@ if [[ -n $platform && "$platform" != "hbb" ]]; then
 fi
 
 #VER=1.9
-VER=1.10.2
+#VER=1.10.2
+VER=1.11
 ar=htslib-${VER}.tar.bz2
 if [[ ! -s $target_dir ]] ; then
     curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${ar}
