@@ -1595,6 +1595,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool coverage_opt = has_option(argv, argv+argc, "--coverage");
     bool annotation_opt = has_option(argv, argv+argc, "--annotation");
     bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
+#ifdef WINDOWS_MINGW
+    if(bigwig_opt) {
+	    bigwig_opt = false;
+	    fprintf(stderr,"WARNING: writing BigWigs (--bigwig) is not supported on Windows at this time, no BigWig file(s) will be written, but any other options will still be processed.\n");
+    }
+#endif
     bool dont_output_coverage = !(coverage_opt || bigwig_opt);
     FILE* cov_fh = stdout;
     
