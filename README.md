@@ -30,20 +30,7 @@ Finally, if none of those options work, the build instructions are at the end of
 
 ## Usage
 
-For any remote file processing, either BAM or BigWigs, you must use the `--prefix <output_file_prefix>` option.
-
-### BAM processing
-While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
-
-```
-megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --annotation <annotated_intervals.bed> --prefix <output_file_prefix>
-```
-
-Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
-
-```
-megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --annotation exons.bed --prefix SRR1258218
-```
+For any remote file processing, either BAM or BigWigs, you *must* use the `--prefix <output_file_prefix>` option.
 
 ### BigWig Processing
 ```
@@ -58,6 +45,19 @@ megadepth SRR1258218.bw --annotation exons.bed --op mean --auc
 Or if you only want the AUC for the whole BigWig:
 ```
 megadepth SRR1258218.bw
+```
+
+### BAM processing
+While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
+
+```
+megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --annotation <annotated_intervals.bed> --prefix <output_file_prefix>
+```
+
+Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
+
+```
+megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --annotation exons.bed --prefix SRR1258218
 ```
 
 ## BAM Processing Subcommands
@@ -88,7 +88,7 @@ Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` o
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
 
-### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout --prefix <output_file_prefix>`
+### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout`
 
 In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
 
@@ -109,7 +109,7 @@ Also, this no longer automatically reports the AUC, you'll also need to pass in 
 By default, `megadepth --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
-### `megadepth /path/to/bamfile --bigwig --prefix <output_file_prefix>`
+### `megadepth /path/to/bamfile --bigwig`
 
 Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
 
