@@ -68,6 +68,8 @@ While any given subcommand may not be particularly fast on its own, doing them a
 Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
 If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
+Also, `--bigwig` will not work on Windows, megadepth as of release 1.0.5 will simply skip writing a BigWig if this option is passed in with the Windows build, but will process other options which still make sense (e.g. `--auc`).
+
 ### `megadepth /path/to/bamfile --auc`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
@@ -107,7 +109,7 @@ Also, this no longer automatically reports the AUC, you'll also need to pass in 
 By default, `megadepth --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with this option, which may result in faster running times.
 
-### `megadepth /path/to/bamfile --coverage --bigwig --prefix <output_file_prefix>`
+### `megadepth /path/to/bamfile --bigwig --prefix <output_file_prefix>`
 
 Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
 
