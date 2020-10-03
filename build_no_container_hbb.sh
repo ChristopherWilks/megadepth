@@ -3,6 +3,9 @@
 set -ex
 yum install cmake -yy
 
+working_dir=$(dirname $0)
+pushd $working_dir
+
 export PATH=/opt/rh/devtoolset-8/root/usr/bin:$PATH
 export CFLAGS="-g -O2 -fvisibility=hidden -DCURL_STATICLIB -fPIC"
 export CPPFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include"
@@ -12,7 +15,13 @@ export STATICLIB_CFLAGS="-g -O2 -fvisibility=hidden -fPIC"
 export STATICLIB_CPPFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include"
 
 build_type=$1
-bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth_statlib2"; }'`
+bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth"; }'`
+
+if [[ "$bc" == "megadepth_static" ]]; then
+    ln -fs CMakeLists.txt.static CMakeLists.txt
+else
+    ln -fs CMakeLists.txt.statlib CMakeLists.txt
+fi
 
 #dont need our own zlib, since it's already statically compiled in HBB
 
@@ -53,11 +62,11 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}
 popd
 cp ${DR}/${bc} ./
-ln -fs ./$bc megadepth
+#ln -fs ./$bc megadepth
 ./megadepth --version
 rm -rf ${DR}
-mv megadepth_statlib2 megadepth_statlib2.full
-strip -s megadepth_statlib2.full -o megadepth_statlib2
+mv megadepth megadepth.full
+strip -s megadepth.full -o megadepth
 
 DR=build-debug-temp
 mkdir -p ${DR}
@@ -66,6 +75,6 @@ cmake -DCMAKE_BUILD_TYPE=Debug ..
 make ${bc}
 popd
 cp ${DR}/${bc} ./${bc}_debug
-ln -fs ./${bc}_debug megadepth_debug
+#ln -fs ./${bc}_debug megadepth_debug
 ./megadepth_debug --version
 rm -rf ${DR}
