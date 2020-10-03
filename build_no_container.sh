@@ -6,6 +6,8 @@ set -e
 build_type=$1
 bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } elsif($bt=~/statlib/i) { print "megadepth_statlib"; } else { print "megadepth_dynamic"; }'`
 
+ln -fs CMakeLists.txt.ci CMakeLists.txt
+
 if [[ ! -s zlib ]] ; then
     ./get_zlib.sh
 fi
