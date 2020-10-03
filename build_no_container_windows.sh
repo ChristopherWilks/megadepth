@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 
-set -e
+set -ex
 bc=megadepth_static
 
+working_dir=$(dirname $0)
+pushd $working_dir
+
+ln -fs CMakeLists.txt.windows CMakeLists.txt
+
 #.e.g x86_64-w64-mingw32 or i686-w64-mingw32
-compiler=$1
+compiler=x86_64-w64-mingw32
 #e.g. 64 (32 doesn't work at this point)
-arch=$2
+arch=64
 export CC=${compiler}-gcc
 export CXX=${compiler}-g++
 export AR=${compiler}-ar
