@@ -8,6 +8,9 @@ pushd $working_dir
 
 ln -fs CMakeLists.txt.windows CMakeLists.txt
 
+#clear symlink main lib dirs
+rm -rf zlib htslib libBigWig libdeflate libcurl build-release-temp
+
 #.e.g x86_64-w64-mingw32 or i686-w64-mingw32
 compiler=x86_64-w64-mingw32
 #e.g. 64 (32 doesn't work at this point)

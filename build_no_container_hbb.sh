@@ -6,6 +6,9 @@ yum install cmake -yy
 working_dir=$(dirname $0)
 pushd $working_dir
 
+#clear symlink main lib dirs
+rm -rf zlib htslib libBigWig libdeflate build-release-temp
+
 export PATH=/opt/rh/devtoolset-8/root/usr/bin:$PATH
 export CFLAGS="-g -O2 -fvisibility=hidden -DCURL_STATICLIB -fPIC"
 export CPPFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include"
@@ -25,11 +28,13 @@ fi
 
 #dont need our own zlib, since it's already statically compiled in HBB
 
-if [[ ! -s libdeflate ]] ; then
+if [[ ! -s libdeflate_hbb ]] ; then
     ./get_libdeflate.sh
+    mv libdeflate libdeflate_hbb
 fi
+ln -fs libdeflate_hbb libdeflate
 
-if [[ ! -s htslib ]] ; then
+if [[ ! -s htslib_hbb ]] ; then
     export CPPFLAGS="$CPPFLAGS -I../libdeflate"
     #for staticlly linking libcurl
     export LDFLAGS="-static-libstdc++ -L/hbb_shlib/lib -L../libdeflate"
@@ -39,15 +44,20 @@ if [[ ! -s htslib ]] ; then
     export LDFLAGS="-L/hbb_shlib/lib -static-libstdc++"
     export LIBS=
     #reset env vars
+    mv htslib htslib_hbb
 fi
+ln -fs htslib_hbb htslib
 
-if [[ ! -s libBigWig ]] ; then
+if [[ ! -s libBigWig_hbb ]] ; then
     ./get_libBigWig.sh
     pushd libBigWig
+    export CFLAGS="-O2 -I/hbb_shlib/include -DCURL_STATICLIB -fPIC"
     make clean
     make -f Makefile.fpic lib-static
     popd
+    mv libBigWig libBigWig_hbb
 fi
+ln -fs libBigWig_hbb libBigWig
 export CFLAGS="-g -O2 -fvisibility=hidden -I/hbb_shlib/include -DCURL_STATICLIB -fPIC"
 export LDFLAGS="-L/hbb_shlib/lib -static-libstdc++"
 

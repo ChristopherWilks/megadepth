@@ -4,7 +4,7 @@ project(megadepth)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++11 -DMEGADEPTH_VERSION=\"\\\"`cat ../VERSION`\\\"\"")
 add_executable(megadepth megadepth.cpp)
-include_directories(libdeflate htslib libBigWig /hbb_shlib/include)
+include_directories(/hbb_shlib/include libdeflate htslib libBigWig)
 
 #to work with HBB to statically link libcurl & friends
 set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")

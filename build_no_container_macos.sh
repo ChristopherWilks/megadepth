@@ -7,6 +7,9 @@ pushd $working_dir
 
 ln -fs CMakeLists.txt.ci CMakeLists.txt
 
+#clear symlink main lib dirs
+rm -rf zlib htslib libBigWig libdeflate build-release-temp
+
 export APPLE_VER=12
 OSXCROSS_ROOT=/opt/osxcross/target/bin
 export PATH=$OSXCROSS_ROOT:$PATH
@@ -25,24 +28,24 @@ bc=megadepth_statlib
 
 if [[ ! -s libdeflate_macos ]] ; then
     ./get_libdeflate.sh $compiler macos
-    ln -fs libdeflate_macos libdeflate
 fi
+ln -fs libdeflate_macos libdeflate
 
 export CFLAGS="-I../libdeflate"
 export LDFLAGS="-L../libdeflate -ldeflate"
 if [[ ! -e htslib_macos/libhts.a ]] ; then
     ./get_htslib.sh $compiler macos
-    ln -fs htslib_macos htslib
 fi
+ln -fs htslib_macos htslib
 
 if [[ ! -s libBigWig_macos ]] ; then
     ./get_libBigWig.sh macos
-    ln -fs libBigWig_macos libBigWig
-    pushd libBigWig
+    pushd libBigWig_macos
     make clean
     make -f Makefile.fpic lib-static
     popd
 fi
+ln -fs libBigWig_macos libBigWig
 
 export CFLAGS=
 export LDFLAGS=

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
+set -ex
 
 #build dynamic by default
 build_type=$1
@@ -8,25 +8,36 @@ bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static";
 
 ln -fs CMakeLists.txt.ci CMakeLists.txt
 
-if [[ ! -s zlib ]] ; then
+#clear symlink main lib dirs
+rm -rf zlib htslib libBigWig libdeflate build-release-temp
+
+if [[ ! -s zlib_ci ]] ; then
     ./get_zlib.sh
+    mv zlib zlib_ci
 fi
+ln -fs zlib_ci zlib
 
-if [[ ! -s libdeflate ]] ; then
+if [[ ! -s libdeflate_ci ]] ; then
     ./get_libdeflate.sh
+    mv libdeflate libdeflate_ci
 fi
+ln -fs libdeflate_ci libdeflate
 
-if [[ ! -s htslib ]] ; then
+if [[ ! -s htslib_ci ]] ; then
     export CPPFLAGS="-I../libdeflate"
     export LDFLAGS="-L../libdeflate -ldeflate"
     ./get_htslib.sh linux
     export CPPFLAGS=
     export LDFLAGS=
+    mv htslib htslib_ci
 fi
+ln -fs htslib_ci htslib
 
-if [[ ! -s libBigWig ]] ; then
+if [[ ! -s libBigWig_ci ]] ; then
     ./get_libBigWig.sh
+    mv libBigWig libBigWig_ci
 fi
+ln -fs libBigWig_ci libBigWig
 
 set -x
 
@@ -64,8 +75,8 @@ pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}
 popd
-cp ${DR}/${bc} ./
-ln -fs ./$bc megadepth
+cp ${DR}/${bc} ./${bc}_ci
+ln -fs ./${bc}_ci megadepth
 ./megadepth --version
 rm -rf ${DR}
 
