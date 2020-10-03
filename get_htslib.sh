@@ -45,8 +45,8 @@ if [[ "$compiler" == "linux" ]]; then
         make
     fi
 else
-    ./configure --enable-plugins --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
     if [[ "$platform" == "macos" ]]; then
+    	./configure --enable-plugins --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
         #inherit CC, AR, and RANLIB from build_no_container_xcross.sh
         echo $CC
         echo $AR
@@ -56,6 +56,7 @@ else
         #export AR=/opt/osxcross/target/bin/${compiler}-ar
         #export RANLIB=/opt/osxcross/target/bin/${compiler}-ranlib
     else # windows
+    	./configure --disable-bz2 --disable-lzma --with-libdeflate --host=$compiler
         export CC=${compiler}-gcc
         export AR=${compiler}-ar
         export RANLIB=${compiler}-ranlib
