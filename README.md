@@ -4,11 +4,9 @@
 
 BigWig and BAM related utilities.
 
-We strongly recommend use of one of the pre-compiled binaries for x86_64 linux systems:
-
-* [dynamically linked binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.5/megadepth)
-
-NOTE: the statically linked binary does not support remote BigWig/BAM processing due to the difficulties in linking a static libcurl, but may still be useful for those who want to do local processing on systems where the dynamic binary doesn't work.
+We recommend use of the 
+[dynamically linked, pre-compiled binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.5/megadepth)
+for x86_64 linux systems
 
 There is also a Docker image that can be used to run `megadepth`:
 
