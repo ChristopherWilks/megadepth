@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
-set -e
+set -ex
+
+working_dir=$(dirname $0)
+pushd $working_dir
+
+ln -fs CMakeLists.txt.ci CMakeLists.txt
 
 export APPLE_VER=12
 OSXCROSS_ROOT=/opt/osxcross/target/bin
@@ -54,18 +59,6 @@ pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_AR=${AR} -DCMAKE_RANLIB=${RANLIB} -D CMAKE_C_COMPILER=${OSX_CC} -D CMAKE_CXX_COMPILER=${OSX_CXX} ..
 make ${bc}
 popd
-cp ${DR}/${bc} ./
-ln -fs ./$bc megadepth
-./megadepth --version
-rm -rf ${DR}
-
-DR=build-debug-temp
-mkdir -p ${DR}
-pushd ${DR}
-cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_AR=${AR} -DCMAKE_RANLIB=${RANLIB} -D CMAKE_C_COMPILER=${OSX_CC} -D CMAKE_CXX_COMPILER=${OSX_CXX} ..
-make ${bc}
-popd
-cp ${DR}/${bc} ./${bc}_debug
-ln -fs ./${bc}_debug megadepth_debug
-./megadepth_debug --version
+cp ${DR}/${bc} ./megadepth_macos
+./megadepth_macos --version
 rm -rf ${DR}
