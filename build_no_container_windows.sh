@@ -5,6 +5,7 @@ bc=megadepth_static
 
 #.e.g x86_64-w64-mingw32 or i686-w64-mingw32
 compiler=$1
+#e.g. 64 (32 doesn't work at this point)
 arch=$2
 export CC=${compiler}-gcc
 export CXX=${compiler}-g++
