@@ -11,6 +11,7 @@ else
     time ./md_runner tests/test.cram --prefix test.cram --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 fi
 
+
 diff <(sort tests/test.bam.orig.frags.tsv) <(sort test.bam.frags.tsv)
 diff tests/test.bam.orig.alts.tsv test.bam.alts.tsv
 diff tests/test.bam.orig.softclip.tsv test.bam.softclip.tsv
@@ -18,6 +19,10 @@ for f in annotation unique; do
     diff tests/test.bam.mosdepth.${f}.per-base.exon_sums.tsv test.bam.${f}.tsv
 done
 diff tests/test.bam.mosdepth.bwtool.all_aucs test.bam.auc.tsv
+
+#check --op mean with BAMs
+./md_runner tests/test.bam --annotation tests/test_exons.bed --op mean > test.bam.mean
+paste <(cut -f 4 test.bam.annotation.tsv) <(cut -f 2- test.bam.mean) | perl -ne 'chomp; $f=$_; ($sum,$s,$e,$m)=split(/\t/,$_); $d=($e-$s); $m2=$sum/$d; $m2=sprintf("%.3f",$m2); if($m != $m2) { print "$f\n"; $ret=1;} END { exit($ret); }'
 
 ./md_runner tests/test.bam | fgrep "ALL_READS_ALL_BASES" > auc.single
 diff auc.single <(fgrep "ALL_READS_ALL_BASES" tests/test.bam.mosdepth.bwtool.all_aucs)
@@ -79,5 +84,5 @@ time ./md_runner test.bam.all.bw --sums-only --annotation tests/testbw2.bed --pr
 diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 
 #clean up any previous test files
-rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single
+rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean
 

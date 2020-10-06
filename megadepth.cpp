@@ -168,6 +168,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Requires libBigWig.\n"
     "  --annotation <bed>   Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
+    "  --op <sum[default], mean>     Statistic to run on the intervals provided by --annotation\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -989,21 +990,30 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
     return err;
 }
 
+enum Op { csum, cmean, cmin, cmax };
+typedef hashmap<std::string, int> str2op;
 template <typename T>
-static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, bool just_auc = false, int keep_order_idx = -1) {
+static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, Op op, bool just_auc = false, int keep_order_idx = -1) {
     unsigned long z, j;
+    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    if(SUMS_ONLY)
+        printPtr = &print_shared_sums_only;
     for(z = 0; z < annotations.size(); z++) {
         T sum = 0;
         T start = annotations[z][0];
         T end = annotations[z][1];
+        T local_sum = 0;
         for(j = start; j < end; j++) {
             assert(j < chr_size);
-            sum += coverages[j];
+            local_sum += coverages[j];
         }
+        sum += local_sum;
         (*annotated_auc) = (*annotated_auc) + sum;
         if(!just_auc) {
+            if(op == cmean) 
+                sum = (double)local_sum / ((double)(end-start));
             if(keep_order_idx == -1)
-                print_shared(ofp, chrm, (long) start, (long) end, sum, nullptr, 0);
+                (*printPtr)(ofp, chrm, (long) start, (long) end, sum, nullptr, 0);
             else
                 annotations[z][keep_order_idx] = sum;
         }
@@ -1137,8 +1147,6 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 
 
 using chr2bool = hashset<std::string>;
-enum Op { csum, cmean, cmin, cmax };
-typedef hashmap<std::string, int> str2op;
 template <typename T>
 static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
@@ -1761,10 +1769,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
-                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, !annotation_opt, keep_order_idx);
+                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, op, !annotation_opt, keep_order_idx);
                             if(unique) {
                                 keep_order_idx = keep_order?3:-1;
-                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, !annotation_opt, keep_order_idx);
+                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, op, !annotation_opt, keep_order_idx);
                             }
                             if(!keep_order)
                                 annotation_chrs_seen->insert(hdr->target_name[ptid]);
@@ -1979,10 +1987,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
                 int keep_order_idx = keep_order?2:-1;
-                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, false, keep_order_idx);
+                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, op, false, keep_order_idx);
                 if(unique) {
                     keep_order_idx = keep_order?3:-1;
-                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, false, keep_order_idx);
+                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, op, false, keep_order_idx);
                 }
                 if(!keep_order)
                     annotation_chrs_seen->insert(hdr->target_name[ptid]);
