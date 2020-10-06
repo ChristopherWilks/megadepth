@@ -4,11 +4,11 @@ set -xe
 static=$1
 
 if [[ -z $static ]]; then
-    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout > test_run_out 2>&1
-    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout > test_cram_run_out 2>&1
+    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
+    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 else
-    time ./md_runner tests/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout > test_run_out 2>&1
-    time ./md_runner tests/test.cram --prefix test.cram --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout > test_cram_run_out 2>&1
+    time ./md_runner tests/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
+    time ./md_runner tests/test.cram --prefix test.cram --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 fi
 
 diff <(sort tests/test.bam.orig.frags.tsv) <(sort test.bam.frags.tsv)

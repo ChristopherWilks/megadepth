@@ -141,6 +141,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --junctions          Extract jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
+    "  --filter-in          Integer bitmask, any bits of which alignments need to have to be kept (similar to samtools view -f).\n"
+    "  --filter-out         Integer bitmask, any bits of which alignments need to have to be skipped (similar to samtools view -F).\n"
     "\n"
     "Non-reference summaries:\n"
     "  --alts                       Print differing from ref per-base coverages\n"
@@ -931,26 +933,25 @@ typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
 static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
-	char* tok = strtok(line, delim);
-	int i = 0;
-	char* chrm = nullptr;
+    char* tok = strtok(line, delim);
+    int i = 0;
+    char* chrm = nullptr;
     long start = -1;
     long end = -1;
     int ret = 0;
-	int last_col = END_COL;
-	while(tok != nullptr) {
-		if(i > last_col)
-			break;
-		if(i == CHRM_COL) {
-			chrm = strdup(tok);
-		}
-		else if(i == START_COL)
-			start = atol(tok);
-		else if(i == END_COL)
-			end = atol(tok);
-		i++;
-		tok = strtok(nullptr, delim);
-	}
+    int last_col = END_COL;
+    while(tok != nullptr) {
+        if(i > last_col)
+            break;
+        if(i == CHRM_COL)
+            chrm = strdup(tok);
+        else if(i == START_COL)
+            start = atol(tok);
+        else if(i == END_COL)
+            end = atol(tok);
+        i++;
+        tok = strtok(nullptr, delim);
+    }
     //if we need to keep the order, then we'll store values here
     const int alen = keep_order?4:2;
     T* coords = new T[alen];
@@ -1597,8 +1598,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool bigwig_opt = has_option(argv, argv+argc, "--bigwig");
 #ifdef WINDOWS_MINGW
     if(bigwig_opt) {
-	    bigwig_opt = false;
-	    fprintf(stderr,"WARNING: writing BigWigs (--bigwig) is not supported on Windows at this time, no BigWig file(s) will be written, but any other options will still be processed.\n");
+        bigwig_opt = false;
+        fprintf(stderr,"WARNING: writing BigWigs (--bigwig) is not supported on Windows at this time, no BigWig file(s) will be written, but any other options will still be processed.\n");
     }
 #endif
     bool dont_output_coverage = !(coverage_opt || bigwig_opt);
@@ -1702,6 +1703,17 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(long_reads)
         //enough for the cigar string and ~100 junctions
         jx_str_sz = 12048;
+    
+    //no filter out by default
+    int filter_in_mask = 0xFFFFFFFF;
+    if(has_option(argv, argv+argc, "--filter-in")) {
+        filter_in_mask = atoi(*(get_option(argv, argv+argc, "--filter-in")));
+    }
+    //filter out alignments with either BAM_FUNMAP and/or BAM_FSECONDARY flags set by default (260)
+    int filter_out_mask = 260;
+    if(has_option(argv, argv+argc, "--filter-out")) {
+        filter_out_mask = atoi(*(get_option(argv, argv+argc, "--filter-out")));
+    }
 
     while(sam_read1(bam_fh, hdr, rec) >= 0) {
         recs++;
@@ -1710,7 +1722,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         char* qname = bam_get_qname(rec);
         //*******Main Quantification Conditional (for ref & alt coverage, frag dist)
         //filter OUT unmapped and secondary alignments
-        if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
+        //if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
+        //catch case where c-flag is 0 and we've specified an all inclusive filter-in option (default)
+        if(((c->flag & filter_in_mask) != 0 && (c->flag & filter_out_mask) == 0)
+                                        || (c->flag == 0 && filter_in_mask == 0xFFFFFFFF)) {
             reads_processed++;
             //base-0 start coordinate
             int32_t refpos = rec->core.pos;
@@ -2096,7 +2111,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     if(argc == 1 
             || has_option(argv, argv+argc, "--auc")
             || (argc == 3 && has_option(argv, argv+argc, "--bwbuffer"))) {
-    	auc_file = stdout;
+        auc_file = stdout;
         if(has_option(argv, argv+argc, "--no-auc-stdout")) {
             char afn[1024];
             sprintf(afn, "%s.auc.tsv", prefix);
