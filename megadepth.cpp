@@ -223,22 +223,22 @@ void print_shared_sums_only<long>(FILE* afp,const char* c, long start, long end,
 
 template <>
 void print_shared<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, val);
+        fprintf(afp, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, val);
 }
 
 template <>
 void print_shared_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%.3f\n", val);
+        fprintf(afp, "%.2f\n", val);
 }
 
 template <>
 void print_local<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.3f\n", c, (long) start, (long) end, local_vals[z]);
+        fprintf(afp, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, local_vals[z]);
 }
 
 template <>
 void print_local_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%.3f\n", local_vals[z]);
+        fprintf(afp, "%.2f\n", local_vals[z]);
 }
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {

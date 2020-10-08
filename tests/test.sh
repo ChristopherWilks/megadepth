@@ -22,7 +22,7 @@ diff tests/test.bam.mosdepth.bwtool.all_aucs test.bam.auc.tsv
 
 #check --op mean with BAMs
 ./md_runner tests/test.bam --annotation tests/test_exons.bed --op mean > test.bam.mean
-paste <(cut -f 4 test.bam.annotation.tsv) <(cut -f 2- test.bam.mean) | perl -ne 'chomp; $f=$_; ($sum,$s,$e,$m)=split(/\t/,$_); $d=($e-$s); $m2=$sum/$d; $m2=sprintf("%.3f",$m2); if($m != $m2) { print "$f\n"; $ret=1;} END { exit($ret); }'
+paste <(cut -f 4 test.bam.annotation.tsv) <(cut -f 2- test.bam.mean) | perl -ne 'chomp; $f=$_; ($sum,$s,$e,$m)=split(/\t/,$_); $d=($e-$s); $m2=$sum/$d; $m2=sprintf("%.2f",$m2); if($m != $m2) { print "$f\n"; $ret=1;} END { exit($ret); }'
 
 ./md_runner tests/test.bam | fgrep "ALL_READS_ALL_BASES" > auc.single
 diff auc.single <(fgrep "ALL_READS_ALL_BASES" tests/test.bam.mosdepth.bwtool.all_aucs)
