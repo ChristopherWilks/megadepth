@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <zlib.h>
 
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
@@ -177,6 +178,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --double-count       Allow overlapping ends of PE read to count twice toward\n"
     "                       coverage\n"
     "  --num-bases          Report total sum of bases in alignments processed (that pass filters)\n"
+    "  --gzip               Turns on gzipping of coverage output (no effect if --bigwig is passsed),\n"
+    "                       this will also enable --no-coverage-stdout.\n"
     "\n"
     "Other outputs:\n"
     "  --read-ends          Print counts of read starts/ends, if --min-unique-qual is set\n"
@@ -586,6 +589,15 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
     for(long i = 0; i < arr_sz; i++)
         arr[i] = 0;
 }
+                                
+int my_write(void* fh, char* buf, uint32_t buf_len) {
+    return fprintf((FILE*) fh, "%s", buf); 
+}
+
+int my_gzwrite(void* fh, char* buf, uint32_t buf_len) {
+    return gzwrite(*((gzFile*) fh), buf, buf_len); 
+}
+
 
 //used for buffering up text/gz output
 int OUT_BUFF_SZ=4000000;
@@ -598,6 +610,7 @@ static uint64_t print_array(const char* prefix,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         FILE* cov_fh,
+                        gzFile& gcov_fh,
                         const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
@@ -612,9 +625,17 @@ static uint64_t print_array(const char* prefix,
     int buf_written = 0;
     char* buf = nullptr;
     char* bufptr = nullptr;
+    int (*printPtr) (void* fh, char* buf, uint32_t buf_len) = &my_write;
+    void* cfh = nullptr;
     if(!bwfp) {
       buf = new char[OUT_BUFF_SZ];
       bufptr = buf;
+      cfh = cov_fh; 
+      //writing gzip
+      if(!cov_fh) {
+        printPtr = &my_gzwrite;
+        cfh = &gcov_fh; 
+      }
     }
     //TODO: speed this up, maybe keep a separate vector
     //which tracks where the runs of the same value stop
@@ -626,6 +647,8 @@ static uint64_t print_array(const char* prefix,
     //the type of output ahead of time to get rid of the if's
     //
     //this will print the coordinates in base-0
+    uint32_t buf_len = 0;
+    int bytes_written = 0;
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
             if(!first) {
@@ -640,11 +663,18 @@ static uint64_t print_array(const char* prefix,
                         else {
                             if(buf_written >= num_lines_per_buf) {
                                 bufptr[0]='\0';
-                                fprintf(cov_fh, "%s", buf); 
+                                //fprintf(cov_fh, "%s", buf); 
+                                //int bytesw = gzprintf(*gcov_fh, "%s", buf);
+                                //int bytesw = gzwrite(gcov_fh, buf, buf_len); 
+                                //fprintf(stderr,"gz bytes written %d buf_len=%d\n",bytesw,buf_len);
+                                (*printPtr)(cfh, buf, buf_len);
                                 bufptr = buf;
                                 buf_written = 0;
+                                buf_len = 0;
                             }
-                            bufptr += sprintf(bufptr, "%s\t%u\t%u\t%.0f\n", chrm, last_pos, i, running_value);
+                            bytes_written = sprintf(bufptr, "%s\t%u\t%u\t%.0f\n", chrm, last_pos, i, running_value);
+                            bufptr += bytes_written;
+                            buf_len += bytes_written;
                             buf_written++;
                         } 
                         first_print = false;
@@ -656,6 +686,7 @@ static uint64_t print_array(const char* prefix,
             last_pos = i;
         }
     }
+    char last_line[1024];
     if(!first) {
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
@@ -667,9 +698,16 @@ static uint64_t print_array(const char* prefix,
                 else {
                     if(buf_written > 0) {
                         bufptr[0]='\0';
-                        fprintf(cov_fh, "%s", buf); 
+                        //fprintf(cov_fh, "%s", buf); 
+                        //int bytesw = gzwrite(gcov_fh, buf, buf_len); 
+                        //fprintf(stderr,"last1 gz bytes written %d\n",bytesw);
+                        (*printPtr)(cfh, buf, buf_len);
                     }
-                    fprintf(cov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    //fprintf(cov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    //int bytesw = gzprintf(gcov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    //fprintf(stderr,"last2 gz bytes written %d\n",bytesw);
+                    buf_len = sprintf(last_line, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    (*printPtr)(cfh, last_line, buf_len);
                 }
             }
         }
@@ -1612,6 +1650,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
 #endif
     bool dont_output_coverage = !(coverage_opt || bigwig_opt);
     FILE* cov_fh = stdout;
+    bool gzip = has_option(argv, argv+argc, "--gzip");
+    bool no_coverage_stdout = gzip || has_option(argv, argv+argc, "--no-coverage-stdout");
+    gzFile gcov_fh;
     
     bool unique = has_option(argv, argv+argc, "--min-unique-qual");
     FILE* uafp = nullptr;
@@ -1619,9 +1660,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages = new uint32_t[chr_size];
-        if(bigwig_opt) {
+        if(bigwig_opt)
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
-        }
         if(unique) {
             if(annotation_opt) {
                 uafp = stdout;
@@ -1636,10 +1676,18 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages = new uint32_t[chr_size];
         }
-        if(coverage_opt && !bigwig_opt && has_option(argv, argv+argc, "--no-coverage-stdout")) {
+        if(coverage_opt && !bigwig_opt && no_coverage_stdout) {
             char cov_fn[1024];
-            sprintf(cov_fn, "%s.coverage.tsv", prefix);
-            cov_fh = fopen(cov_fn,"w");
+            if(gzip) {
+                sprintf(cov_fn, "%s.coverage.tsv.gz", prefix);
+                //gzFile gcov_fh_ = gzopen(cov_fn,"w");
+                gcov_fh = gzopen(cov_fn,"w");
+                cov_fh = nullptr;
+            }
+            else {
+                sprintf(cov_fn, "%s.coverage.tsv", prefix);
+                cov_fh = fopen(cov_fn,"w");
+            }
         }
     }
     fraglen2count* frag_dist = new fraglen2count(1);
@@ -1760,10 +1808,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt || bigwig_opt || auc_opt) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, dont_output_coverage);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, dont_output_coverage);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
@@ -1979,10 +2027,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, dont_output_coverage);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -2037,10 +2085,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(ubwfp) {
         bwClose(ubwfp);
-            bwCleanup();
+        bwCleanup();
     }
     if(cov_fh && cov_fh != stdout)
         fclose(cov_fh);
+    if(gzip && gcov_fh)
+        gzclose(gcov_fh);
     if(rsfp)
         fclose(rsfp);
     if(refp)
