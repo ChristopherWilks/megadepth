@@ -84,7 +84,7 @@ pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 make ${bc}
 popd
-cp ${DR}/${bc} ./${bc}_debug
+cp ${DR}/${bc} ./${bc}_hbb_debug
 #ln -fs ./${bc}_debug megadepth_debug
-./megadepth_debug --version
+./megadepth_hbb_debug --version
 rm -rf ${DR}
