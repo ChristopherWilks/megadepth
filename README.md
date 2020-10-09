@@ -4,7 +4,7 @@
 
 ![build](https://github.com/ChristopherWilks/megadepth/workflows/build/badge.svg)
 
-BigWig and BAM related utilities.
+BigWig and BAM/CRAM related utilities.
 
 We recommend use of the 
 [dynamically linked, pre-compiled binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.5/megadepth)
