@@ -74,6 +74,9 @@ int UNKNOWN_FORMAT=-1;
 int BAM_FORMAT = 1;
 int BW_FORMAT = 2;
 
+//taken from HTSlib bgzip
+int BGZF_WRITE_WINDOW_SZ = 64 * 1024;
+
 //critical to use a high value here for remote BigWigs
 //accesses, has much less (maybe no) effect on local processing
 const uint32_t default_BW_READ_BUFFER = 1<<30;
@@ -595,7 +598,8 @@ int my_write(void* fh, char* buf, uint32_t buf_len) {
 }
 
 int my_gzwrite(void* fh, char* buf, uint32_t buf_len) {
-    return gzwrite(*((gzFile*) fh), buf, buf_len); 
+    return bgzf_write((BGZF*)fh, buf, buf_len);
+    //return gzwrite(*((gzFile*) fh), buf, buf_len); 
 }
 
 
@@ -610,7 +614,8 @@ static uint64_t print_array(const char* prefix,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         FILE* cov_fh,
-                        gzFile& gcov_fh,
+                        //gzFile& gcov_fh,
+                        BGZF* gcov_fh,
                         const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
@@ -634,7 +639,7 @@ static uint64_t print_array(const char* prefix,
       //writing gzip
       if(!cov_fh) {
         printPtr = &my_gzwrite;
-        cfh = &gcov_fh; 
+        cfh = gcov_fh; 
       }
     }
     //TODO: speed this up, maybe keep a separate vector
@@ -1652,7 +1657,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     FILE* cov_fh = stdout;
     bool gzip = has_option(argv, argv+argc, "--gzip");
     bool no_coverage_stdout = gzip || has_option(argv, argv+argc, "--no-coverage-stdout");
-    gzFile gcov_fh;
+    //gzFile gcov_fh;
+    BGZF* gcov_fh = nullptr;
     
     bool unique = has_option(argv, argv+argc, "--min-unique-qual");
     FILE* uafp = nullptr;
@@ -1681,7 +1687,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             if(gzip) {
                 sprintf(cov_fn, "%s.coverage.tsv.gz", prefix);
                 //gzFile gcov_fh_ = gzopen(cov_fn,"w");
-                gcov_fh = gzopen(cov_fn,"w");
+                //gcov_fh = gzopen(cov_fn,"w1");
+                gcov_fh = bgzf_open(cov_fn,"w10");
                 cov_fh = nullptr;
             }
             else {
@@ -2090,7 +2097,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(cov_fh && cov_fh != stdout)
         fclose(cov_fh);
     if(gzip && gcov_fh)
-        gzclose(gcov_fh);
+        bgzf_close(gcov_fh);
+        //gzclose(gcov_fh);
     if(rsfp)
         fclose(rsfp);
     if(refp)
