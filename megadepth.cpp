@@ -39,6 +39,7 @@
 #include <vector>
 #include <thread>
 #include <zlib.h>
+#include<iterator>
 
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
@@ -1561,6 +1562,24 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
     return ret;
 }
 
+//based on http://www.cplusplus.com/reference/iterator/iterator/
+class BAMIterator : public std::iterator<std::input_iterator_tag, bam1_t>
+{
+    bam1_t* b;
+    htsFile* bfh;
+    bam_hdr_t* bhdr;
+
+public:
+    BAMIterator(bam1_t* z, htsFile* bam_fh, bam_hdr_t* bam_hdr) :b(z),bfh(bam_fh),bhdr(bam_hdr) {}
+    BAMIterator(const BAMIterator& bitr) : b(bitr.b),bfh(bitr.bfh),bhdr(bitr.bhdr) {}
+    BAMIterator& operator++() { int r = sam_read1(bfh, bhdr, b); if(r < 0) { b=nullptr; } return *this; }
+    BAMIterator operator++(int) {BAMIterator temp(*this); operator++(); return temp;}
+    bool operator==(const BAMIterator& rhs) const {return b==rhs.b;}
+    bool operator!=(const BAMIterator& rhs) const {return b!=rhs.b;}
+    bam1_t* operator*() {return b;}
+};
+
+
 template <typename T>
 int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
@@ -1777,9 +1796,13 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(has_option(argv, argv+argc, "--filter-out")) {
         filter_out_mask = atoi(*(get_option(argv, argv+argc, "--filter-out")));
     }
-
-    while(sam_read1(bam_fh, hdr, rec) >= 0) {
+    bam1_t* rec_ = bam_init1();
+    BAMIterator bitr(rec_, bam_fh, hdr);
+    BAMIterator end(nullptr, nullptr, nullptr);
+    //while(sam_read1(bam_fh, hdr, rec) >= 0) {
+    for(++bitr; bitr != end; ++bitr) {
         recs++;
+        rec = *bitr;
         bam1_core_t *c = &rec->core;
         //read name
         char* qname = bam_get_qname(rec);
