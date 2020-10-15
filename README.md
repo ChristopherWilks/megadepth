@@ -7,7 +7,7 @@
 BigWig and BAM/CRAM related utilities.
 
 We recommend use of the 
-[dynamically linked, pre-compiled binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.5/megadepth)
+[dynamically linked, pre-compiled binary with HTSlib, libBigWig, libcurl, libdeflate, & zlib statically linked](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.7/megadepth)
 for x86_64 linux systems
 
 There is also a Docker image that can be used to run `megadepth`:
