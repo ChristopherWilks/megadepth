@@ -60,10 +60,10 @@ megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --annotation exons.be
 
 If you only want to get a coverage summary (either sum or mean) over a set of intervals, you may see a performance boost if you have a BAM index at the same path as the BAM file:
 ```
-megadepth SRR1258218.sorted.bam --annotation exons.bed --prefix SRR1258218
+megadepth SRR1258218.sorted.bam --annotation exons.bed --prefix SRR1258218 --gzip
 ```
 
-The optional `--gzip` flag will automatically turn off writing to `STDOUT` any coverage (either base or annotation),
+Also, the optional `--gzip` flag in the above example will automatically turn off writing to `STDOUT` any coverage (either base or annotation),
 and will instead write coverage to block gzipped files using the `--prefix` or input filename as the base filename.
 These block gzipped files will also have a Tabix-like index `.csi` built for them as well.
 
