@@ -1650,8 +1650,11 @@ public:
         if(annotations_count == 0)
             return;
         //given a set of regions, check to see if we have an accompaning BAM index file (.bai)
-        //TODO check if BAI exists, if not proceed with linear scan through BAM iterator
-        bidx = sam_index_load(bfh, bam_fn);
+        //check if BAI exists, if not proceed with linear scan through BAM iterator
+        if((bidx = sam_index_load(bfh, bam_fn)) == 0) {
+            fprintf(stderr,"no index for BAM/CRAM file, doing full scan\n");
+            return;
+        } 
         uint32_t amap_count = annotations_count;
         amap = new char[amap_count*NUM_CHARS_IN_REGION_STR];
         amap_ptr = new char*[amap_count];
