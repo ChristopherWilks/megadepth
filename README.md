@@ -58,6 +58,10 @@ Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 megadepth SRR1258218.sorted.bam --threads 4 --bigwig --auc --annotation exons.bed --prefix SRR1258218
 ```
 
+The optional `--gzip` flag will automatically turn off writing to `STDOUT` any coverage (either base or annotation),
+and will instead write coverage to block gzipped files using the `--prefix` or input filename as the base filename.
+These block gzipped files will also have a Tabix-like index `.csi` built for them as well.
+
 ## BAM Processing Subcommands
 
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
