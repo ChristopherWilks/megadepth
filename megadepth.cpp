@@ -1013,7 +1013,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 }
     
 template <typename T>
-static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
+static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations) {
     char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
@@ -1027,6 +1027,7 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
             break;
         }
         assert(err==0);
+        (*num_annotations)++;
         bytes_read = getline(&line, &length, fin);
     }
     std::free(line);
@@ -1460,7 +1461,7 @@ typedef hashmap<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
+int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
@@ -1562,26 +1563,82 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
     return ret;
 }
 
+int sam_index_iterator_wrapper(bam1_t* b, htsFile* bfh, bam_hdr_t* bhdr, hts_itr_t* sam_itr) {
+    return sam_itr_next(bfh, sam_itr, b);
+}
+
+int sam_scan_iterator_wrapper(bam1_t* b, htsFile* bfh, bam_hdr_t* bhdr, hts_itr_t* sam_itr) {
+    return sam_read1(bfh, bhdr, b);
+}
+
+int NUM_CHARS_IN_REGION_STR = 1000;
 //based on http://www.cplusplus.com/reference/iterator/iterator/
+template <typename T>
 class BAMIterator : public std::iterator<std::input_iterator_tag, bam1_t>
 {
     bam1_t* b;
     htsFile* bfh;
     bam_hdr_t* bhdr;
+    hts_idx_t* bidx;
+    hts_itr_t* sam_itr;
+    int (*itrPtr)(bam1_t* b, htsFile* bfh, bam_hdr_t* bhdr, hts_itr_t* sam_itr) = &sam_scan_iterator_wrapper;
+    char* amap;
+    char** amap_ptr;
 
 public:
-    BAMIterator(bam1_t* z, htsFile* bam_fh, bam_hdr_t* bam_hdr) :b(z),bfh(bam_fh),bhdr(bam_hdr) {}
-    BAMIterator(const BAMIterator& bitr) : b(bitr.b),bfh(bitr.bfh),bhdr(bitr.bhdr) {}
-    BAMIterator& operator++() { int r = sam_read1(bfh, bhdr, b); if(r < 0) { b=nullptr; } return *this; }
+    BAMIterator(bam1_t* z, htsFile* bam_fh, bam_hdr_t* bam_hdr) :b(z),bfh(bam_fh),bhdr(bam_hdr),bidx(nullptr),sam_itr(nullptr) {}
+    BAMIterator(bam1_t* z, htsFile* bam_fh, bam_hdr_t* bam_hdr, const char* bam_fn, annotation_map_t<T>* annotations, uint32_t annotations_count, strlist* chrm_order) :b(z),bfh(bam_fh),bhdr(bam_hdr),bidx(nullptr),sam_itr(nullptr) {
+        if(annotations_count == 0)
+            return;
+        //given a set of regions, check to see if we have an accompaning BAM index file (.bai)
+        //TODO check if BAI exists, if not proceed with linear scan through BAM iterator
+        bidx = sam_index_load(bfh, bam_fn);
+        uint32_t amap_count = annotations_count;
+        amap = new char[amap_count*NUM_CHARS_IN_REGION_STR];
+        amap_ptr = new char*[amap_count];
+        //for(typename annotation_map_t<T>::iterator aitr = amap.begin(); aitr != amap.end(); ++aitr) {
+        uint64_t k = 0;
+        for(auto const c : *chrm_order) {
+            std::vector<T*>& annotations_for_chr = (*annotations)[c];
+            for(long z = 0; z < annotations_for_chr.size(); z++) {
+                const auto &item = annotations_for_chr[z];
+                const T start = item[0], end = item[1];
+                //keep the auto null char
+                amap_ptr[k++] = amap;
+                amap += (sprintf(amap, "%s:%lu-%lu", c, (long) start, (long) end)+1);
+            }
+        }
+        amap_ptr[k] = amap;
+        assert(k==amap_count);
+        sam_itr = sam_itr_regarray(bidx, bhdr, amap_ptr, amap_count);
+        if(!sam_itr) {
+            fprintf(stderr,"failed to create SAM file iterator, exiting\n");
+            exit(-1);
+        }
+        //delete amap;
+        //delete amap_ptr;
+        itrPtr = &sam_index_iterator_wrapper;
+    }
+    BAMIterator(const BAMIterator& bitr) : b(bitr.b),bfh(bitr.bfh),bhdr(bitr.bhdr),bidx(bitr.bidx),sam_itr(bitr.sam_itr),itrPtr(bitr.itrPtr) {}
+
+    BAMIterator& operator++() {
+        int r = itrPtr(b, bfh, bhdr, sam_itr);
+        if(r < 0)
+            b = nullptr; 
+        return *this; 
+    }
+
     BAMIterator operator++(int) {BAMIterator temp(*this); operator++(); return temp;}
     bool operator==(const BAMIterator& rhs) const {return b==rhs.b;}
     bool operator!=(const BAMIterator& rhs) const {return b!=rhs.b;}
     bam1_t* operator*() {return b;}
+    //~BAMIterator() { if(sam_itr) { hts_itr_destroy(sam_itr); delete amap; delete amap_ptr;} }
+    ~BAMIterator() { if(sam_itr) { hts_itr_destroy(sam_itr);} }
 };
 
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1797,15 +1854,20 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         filter_out_mask = atoi(*(get_option(argv, argv+argc, "--filter-out")));
     }
     bam1_t* rec_ = bam_init1();
-    BAMIterator bitr(rec_, bam_fh, hdr);
-    BAMIterator end(nullptr, nullptr, nullptr);
+    uint64_t num_annotations_ = 0;
+    if(dont_output_coverage && !auc_opt)
+        num_annotations_ = num_annotations;
+    BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations, chrm_order);
+    BAMIterator<T> end(nullptr, nullptr, nullptr);
     //while(sam_read1(bam_fh, hdr, rec) >= 0) {
     for(++bitr; bitr != end; ++bitr) {
         recs++;
+        //rec = *(*bitr);
         rec = *bitr;
         bam1_core_t *c = &rec->core;
         //read name
         char* qname = bam_get_qname(rec);
+        //fprintf(stderr, "recs %lu, qname %s\n",recs,qname);
         //*******Main Quantification Conditional (for ref & alt coverage, frag dist)
         //filter OUT unmapped and secondary alignments
         //if((c->flag & BAM_FUNMAP) == 0 && (c->flag & BAM_FSECONDARY) == 0) {
@@ -2171,6 +2233,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     bool has_annotation = has_option(argv, argv+argc, "--annotation");
     bool no_annotation_stdout = has_option(argv, argv+argc, "--no-annotation-stdout");
     const char* prefix = fname_arg;
+    uint64_t num_annotations = 0;
     if(has_option(argv, argv+argc, "--prefix"))
             prefix = *(get_option(argv, argv+argc, "--prefix"));
     if(has_annotation) {
@@ -2181,7 +2244,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             return -1;
         }
         afp = fopen(afile, "r");
-        err = read_annotation(afp, &annotations, &chrm_order, keep_order);
+        err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
         fclose(afp);
         
         afp = stdout;
@@ -2210,9 +2273,9 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
 
     assert(err == 0);
     if(is_bam)
-        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file);
+        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
     else
-        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file);
+        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
 }
 
 int get_file_format_extension(const char* fname) {
