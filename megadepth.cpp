@@ -1369,11 +1369,11 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
     int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
     void* out_fh = afp;
     void* uout_fh = uafp;
-    if(afpz != nullptr) {
+    if(afpz) {
         outputFunc = &my_gzwrite;
         out_fh = afpz;
     }
-    if(uafpz != nullptr)
+    if(uafpz)
         uout_fh = uafpz;
     double* local_vals = nullptr;
     for(auto const c : *chrm_order) {
@@ -1391,14 +1391,14 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
         }
         //check if we're doing means output doubles, otherwise output longs
         char* buf = new char[OUT_BUFF_SZ];
-        char* bufptr = nullptr;
+        char* bufptr = buf;
         int buf_len = 0;
         int buf_written = 0;
         //unique
         char* ubuf = nullptr;
         if(uafp)
             ubuf = new char[OUT_BUFF_SZ];
-        char* ubufptr = nullptr;
+        char* ubufptr = ubuf;
         int ubuf_len = 0;
         int ubuf_written = 0;
         int num_lines_per_buf = round(OUT_BUFF_SZ / COORD_STR_LEN) - 3;
@@ -2202,6 +2202,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     annotation_chrs_seen->insert(hdr->target_name[ptid]);
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
+            //assert(afpz == uafpz || (afpz != nullptr && uafpz != nullptr));
             if(keep_order)
                 output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, uafp, uafpz);
         }
@@ -2300,6 +2301,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     //maps chromosome to vector of uint arrays storing start/end of annotated intervals
     int err = 0;
     bool has_annotation = has_option(argv, argv+argc, "--annotation");
+    bool gzip = has_option(argv, argv+argc, "--gzip");
     bool no_annotation_stdout = has_option(argv, argv+argc, "--no-annotation-stdout");
     const char* prefix = fname_arg;
     uint64_t num_annotations = 0;
