@@ -43,6 +43,7 @@
 
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
+#include <htslib/tbx.h>
 #include <sys/stat.h>
 #include "bigWig.h"
 #ifdef WINDOWS_MINGW
@@ -210,16 +211,16 @@ int my_gzwrite(void* fh, char* buf, uint32_t buf_len) {
 }
 
 template <typename T>
-int print_local(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_local(char* buf,const char* c, long start, long end, T val, double* local_vals, long z);
 
 template <typename T>
-int print_local_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_local_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z);
 
 template <typename T>
-int print_shared(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_shared(char* buf,const char* c, long start, long end, T val, double* local_vals, long z);
 
 template <typename T>
-int print_shared_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_shared_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z);
 
 template <>
 int print_local<long>(char* buf,const char* c, long start, long end, long val, double* local_vals, long z) {
@@ -2246,14 +2247,36 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         bwClose(ubwfp);
         bwCleanup();
     }
+    //for writing out an index for BGZipped coverage BED files
+    //based on Tabix source: https://github.com/samtools/htslib/blob/develop/tabix.c
+    char temp_afn[1024];
+    tbx_conf_t tconf = tbx_conf_bed;
+    int min_shift = 14; 
     if(cov_fh && cov_fh != stdout)
         fclose(cov_fh);
-    if(gzip && gcov_fh)
+    if(gzip && gcov_fh) {
+        sprintf(temp_afn, "%s.coverage.tsv.gz", prefix);
+        //if(bgzf_index_dump(gcov_fh, temp_afn, ".gsi") < 0) {
+        //min_shift=14, tbx_conf_bed, towrite out .csi
         bgzf_close(gcov_fh);
-    if(gzip && afpz)
+        if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
+            fprintf(stderr,"Error dumping BGZF index for base coverage, skipping\n");
+        }
+    }
+    if(gzip && afpz) {
+        sprintf(temp_afn, "%s.annotation.tsv.gz", prefix);
         bgzf_close(afpz);
-    if(gzip && uafpz)
+        if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
+            fprintf(stderr,"Error dumping BGZF index for annotation coverage (all alignments), skipping\n");
+        }
+    }
+    if(gzip && uafpz) {
+        sprintf(temp_afn, "%s.unique.tsv.gz", prefix);
         bgzf_close(uafpz);
+        if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
+            fprintf(stderr,"Error dumping BGZF index for annotation coverage (unique alignments), skipping\n");
+        }
+    }
     if(rsfp)
         fclose(rsfp);
     if(refp)
@@ -2325,6 +2348,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             if(gzip) {
                 sprintf(afn, "%s.annotation.tsv.gz", prefix);
                 afpz = bgzf_open(afn,"w10");
+                //bgzf_index_build_init(afpz);
                 afp = nullptr;
             }
             else {
