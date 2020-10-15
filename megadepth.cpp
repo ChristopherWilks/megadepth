@@ -104,6 +104,10 @@ static const int BIGWIG_INIT_VAL = 17;
 static double SOFTCLIP_POLYA_TOTAL_COUNT_MIN=3;
 static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 
+//used for buffering up text/gz output
+static const int OUT_BUFF_SZ=4000000;
+static const int COORD_STR_LEN=34;
+
 static const void print_version() {
     //fprintf(stderr, "megadepth %s\n", string(MEGADEPTH_VERSION).c_str());
     std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
@@ -196,56 +200,65 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --test-polya         Lower Poly-A filter minimums for testing (only useful for debugging/testing)\n"
     "\n";
 
+int my_write(void* fh, char* buf, uint32_t buf_len) {
+    return fprintf((FILE*) fh, "%s", buf); 
+}
+
+int my_gzwrite(void* fh, char* buf, uint32_t buf_len) {
+    return bgzf_write((BGZF*)fh, buf, buf_len);
+    //return gzwrite(*((gzFile*) fh), buf, buf_len); 
+}
+
 template <typename T>
-void print_local(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_local(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
 
 template <typename T>
-void print_local_sums_only(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_local_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
 
 template <typename T>
-void print_shared(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_shared(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
 
 template <typename T>
-void print_shared_sums_only(FILE* afp,const char* c, long start, long end, T val, double* local_vals, long z) { }
+int print_shared_sums_only(char* buf,const char* c, long start, long end, T val, double* local_vals, long z) { }
 
 template <>
-void print_local<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, (long) local_vals[z]);
+int print_local<long>(char* buf,const char* c, long start, long end, long val, double* local_vals, long z) {
+        return sprintf(buf, "%s\t%lu\t%lu\t%lu\n", c, start, end, (long) local_vals[z]);
 }
 
 template <>
-void print_local_sums_only<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%lu\n", (long) local_vals[z]);
+int print_local_sums_only<long>(char* buf,const char* c, long start, long end, long val, double* local_vals, long z) {
+        return sprintf(buf, "%lu\n", (long) local_vals[z]);
 }
 
 template <>
-void print_shared<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%lu\n", c, start, end, val);
+int print_shared<long>(char* buf,const char* c, long start, long end, long val, double* local_vals, long z) {
+        return sprintf(buf, "%s\t%lu\t%lu\t%lu\n", c, start, end, val);
 }
 
 template <>
-void print_shared_sums_only<long>(FILE* afp,const char* c, long start, long end, long val, double* local_vals, long z) {
-        fprintf(afp, "%lu\n", val);
+int print_shared_sums_only<long>(char* buf,const char* c, long start, long end, long val, double* local_vals, long z) {
+        return sprintf(buf, "%lu\n", val);
 }
 
 template <>
-void print_shared<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, val);
+int print_shared<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
+        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, val);
 }
 
 template <>
-void print_shared_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%.2f\n", val);
+int print_shared_sums_only<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
+        return sprintf(buf, "%.2f\n", val);
 }
 
 template <>
-void print_local<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, local_vals[z]);
+int print_local<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
+        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, local_vals[z]);
 }
 
 template <>
-void print_local_sums_only<double>(FILE* afp, const char* c, long start, long end, double val, double* local_vals, long z) {
-        fprintf(afp, "%.2f\n", local_vals[z]);
+int print_local_sums_only<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
+        return sprintf(buf, "%.2f\n", local_vals[z]);
 }
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -594,19 +607,6 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
         arr[i] = 0;
 }
                                 
-int my_write(void* fh, char* buf, uint32_t buf_len) {
-    return fprintf((FILE*) fh, "%s", buf); 
-}
-
-int my_gzwrite(void* fh, char* buf, uint32_t buf_len) {
-    return bgzf_write((BGZF*)fh, buf, buf_len);
-    //return gzwrite(*((gzFile*) fh), buf, buf_len); 
-}
-
-
-//used for buffering up text/gz output
-int OUT_BUFF_SZ=4000000;
-int COORD_STR_LEN=34;
 typedef hashmap<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
@@ -704,14 +704,8 @@ static uint64_t print_array(const char* prefix,
                 else {
                     if(buf_written > 0) {
                         bufptr[0]='\0';
-                        //fprintf(cov_fh, "%s", buf); 
-                        //int bytesw = gzwrite(gcov_fh, buf, buf_len); 
-                        //fprintf(stderr,"last1 gz bytes written %d\n",bytesw);
                         (*printPtr)(cfh, buf, buf_len);
                     }
-                    //fprintf(cov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
-                    //int bytesw = gzprintf(gcov_fh, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
-                    //fprintf(stderr,"last2 gz bytes written %d\n",bytesw);
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
                 }
@@ -1040,9 +1034,11 @@ typedef hashmap<std::string, int> str2op;
 template <typename T>
 static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, Op op, bool just_auc = false, int keep_order_idx = -1) {
     unsigned long z, j;
-    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    int (*printPtr) (char* buf, const char*, long, long, T, double*, long) = &print_shared;
+    int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
     if(SUMS_ONLY)
         printPtr = &print_shared_sums_only;
+    char* buf = new char[1024];
     for(z = 0; z < annotations.size(); z++) {
         T sum = 0;
         T start = annotations[z][0];
@@ -1057,8 +1053,10 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& an
         if(!just_auc) {
             if(op == cmean) 
                 sum = (double)local_sum / ((double)(end-start));
-            if(keep_order_idx == -1)
-                (*printPtr)(ofp, chrm, (long) start, (long) end, sum, nullptr, 0);
+            if(keep_order_idx == -1) {
+                int buf_len = (*printPtr)(buf, chrm, (long) start, (long) end, sum, nullptr, 0);
+                (*outputFunc)(ofp, buf, buf_len);
+            }
             else
                 annotations[z][keep_order_idx] = sum;
         }
@@ -1204,9 +1202,11 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
         fprintf(errfp, "Error in opening %s as BigWig file, exiting\n", fn);
         return -1;
     }
-    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    int (*printPtr) (char* buf, const char*, long, long, T, double*, long) = &print_shared;
+    int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
     if(SUMS_ONLY)
         printPtr = &print_shared_sums_only;
+    char* buf = new char[1024];
     uint32_t tid, blocksPerIteration;
     //ask for huge # of blocks per chromosome to ensure we get all in one go
     //(this is for convenience, not performance)
@@ -1320,8 +1320,10 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     case csum:; // do nothing
                 }
                 //not trying to keep the order in the BED file, just print them as we find them
-                if(keep_order_idx == -1)
-                    (*printPtr)(afp, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                if(keep_order_idx == -1) {
+                    int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                    (*outputFunc)(afp, buf, buf_len);
+                }
                 else if(store_local)
                     local_vals[z] = value;
                 else
@@ -1344,28 +1346,41 @@ template <typename T>
 static void output_missing_annotations(const annotation_map_t<T>* annotations, const chr2bool* annotations_seen, FILE* ofp, Op op = csum) {
     //check if we're doing means output doubles, otherwise output longs
     T val = 0;
-    void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    //void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+    int (*printPtr) (char* buf, const char*, long, long, T, double*, long) = &print_shared;
+    int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
     if(SUMS_ONLY)
         printPtr = &print_shared_sums_only;
+    char* buf = new char[1024];
     for(auto const& kv : *annotations) {
         if(annotations_seen->find(kv.first) == annotations_seen->end()) {
             const auto &ants = kv.second;
             for(unsigned long z = 0; z < kv.second.size(); z++) {
                 const auto p = ants[z];
-                (*printPtr)(ofp, kv.first.c_str(), p[0], p[1], val, nullptr, z);
+                int buf_len = (*printPtr)(buf, kv.first.c_str(), p[0], p[1], val, nullptr, z);
+                (*outputFunc)(ofp, buf, buf_len);
             }
         }
     }
 }
 
 template <typename T>
-void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_map_t<T>* annotations, FILE* afp, FILE* uafp, Op op = csum, str2dblist* store_local = nullptr) {
+void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_map_t<T>* annotations, FILE* afp, BGZF* afpz, FILE* uafp,BGZF* uafpz, Op op = csum, str2dblist* store_local = nullptr) {
+    int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
+    void* out_fh = afp;
+    void* uout_fh = uafp;
+    if(afpz != nullptr) {
+        outputFunc = &my_gzwrite;
+        out_fh = afpz;
+    }
+    if(uafpz != nullptr)
+        uout_fh = uafpz;
     double* local_vals = nullptr;
     for(auto const c : *chrm_order) {
         if(!c)
             continue;
         std::vector<T*>& annotations_for_chr = (*annotations)[c];
-        void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
+        int (*printPtr) (char*, const char*, long, long, T, double*, long) = &print_shared;
         if(SUMS_ONLY)
             printPtr = &print_shared_sums_only;
         if(store_local) {
@@ -1375,16 +1390,57 @@ void output_all_coverage_ordered_by_BED(const strlist* chrm_order, annotation_ma
                 printPtr = &print_local_sums_only;
         }
         //check if we're doing means output doubles, otherwise output longs
+        char* buf = new char[OUT_BUFF_SZ];
+        char* bufptr = nullptr;
+        int buf_len = 0;
+        int buf_written = 0;
+        //unique
+        char* ubuf = nullptr;
+        if(uafp)
+            ubuf = new char[OUT_BUFF_SZ];
+        char* ubufptr = nullptr;
+        int ubuf_len = 0;
+        int ubuf_written = 0;
+        int num_lines_per_buf = round(OUT_BUFF_SZ / COORD_STR_LEN) - 3;
         for(long z = 0; z < annotations_for_chr.size(); z++) {
             const auto &item = annotations_for_chr[z];
             const T start = item[0], end = item[1];
             T val = item[2];
-            (*printPtr)(afp, c, (long) start, (long) end, val, local_vals, z);
+            if(buf_written >= num_lines_per_buf) {
+                bufptr[0]='\0';
+                (*outputFunc)(out_fh, buf, buf_len);
+                bufptr = buf;
+                buf_written = 0;
+                buf_len = 0;
+            }
+            int written = (*printPtr)(bufptr, c, (long) start, (long) end, val, local_vals, z);
+            bufptr += written;
+            buf_len += written;
+            buf_written++;
             //do uniques if asked to
             if(uafp) {
                 val = item[3];
-                (*printPtr)(uafp, c, (long) start, (long) end, val, local_vals, z);
+                if(ubuf_written >= num_lines_per_buf) {
+                    ubufptr[0]='\0';
+                    (*outputFunc)(uout_fh, ubuf, ubuf_len);
+                    ubufptr = ubuf;
+                    ubuf_written = 0;
+                    ubuf_len = 0;
+                }
+                written = (*printPtr)(ubufptr, c, (long) start, (long) end, val, local_vals, z);
+                ubufptr += written;
+                ubuf_len += written;
+                ubuf_written++;
             }
+        }
+        char last_line[1024];
+        if(buf_written > 0) {
+            bufptr[0]='\0';
+            (*outputFunc)(out_fh, buf, buf_len);
+        }
+        if(ubuf_written > 0) {
+            ubufptr[0]='\0';
+            (*outputFunc)(uout_fh, ubuf, ubuf_len);
         }
     }
 }
@@ -1430,7 +1486,7 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         }
         //if we wanted to keep the chromosome order of the annotation output matching the input BED file
         if(keep_order_idx == 2)
-            output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op, &store_local);
+            output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, nullptr, nullptr, op, &store_local);
         else
             output_missing_annotations(annotations, &annotation_chrs_seen, afp, op = op);
         if(afp)
@@ -1461,7 +1517,7 @@ typedef hashmap<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
+int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
@@ -1542,8 +1598,10 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
         }
         for(auto &t: threads) t.join();
         fclose(bw_list_fp);
-        if(afp)
+        if(afp && afp != stdout)
             fclose(afp);
+        if(afpz)
+            bgzf_close(afpz);
         std::free(bwfn);
         return 0; 
     }
@@ -1551,7 +1609,7 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
     int ret = process_bigwig(bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
     //if we wanted to keep the chromosome order of the annotation output matching the input BED file
     if(keep_order)
-        output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, nullptr, op);
+        output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, nullptr, nullptr, op);
     else
         output_missing_annotations(annotations, annotation_chrs_seen, afp, op = op);
     if(afp && afp != stdout)
@@ -1638,7 +1696,7 @@ public:
 
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1738,6 +1796,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     
     bool unique = has_option(argv, argv+argc, "--min-unique-qual");
     FILE* uafp = nullptr;
+    BGZF* uafpz = nullptr;
     if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
@@ -1747,10 +1806,17 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(unique) {
             if(annotation_opt) {
                 uafp = stdout;
-                if(has_option(argv, argv+argc, "--no-annotation-stdout")) {
+                if(gzip || has_option(argv, argv+argc, "--no-annotation-stdout")) {
                     char afn[1024];
-                    sprintf(afn, "%s.unique.tsv", prefix);
-                    uafp = fopen(afn, "w");
+                    if(gzip) {
+                        sprintf(afn, "%s.unique.tsv.gz", prefix);
+                        uafpz = bgzf_open(afn,"w10");
+                        uafp = nullptr;
+                    }
+                    else {
+                        sprintf(afn, "%s.unique.tsv", prefix);
+                        uafp = fopen(afn, "w");
+                    }
                 }
             }
             if(bigwig_opt)
@@ -2137,7 +2203,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             }
             //if we wanted to keep the chromosome order of the annotation output matching the input BED file
             if(keep_order)
-                output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, uafp);
+                output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, uafp, uafpz);
         }
         if(sum_annotation && auc_file) {
             fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
@@ -2183,7 +2249,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fclose(cov_fh);
     if(gzip && gcov_fh)
         bgzf_close(gcov_fh);
-        //gzclose(gcov_fh);
+    if(gzip && afpz)
+        bgzf_close(afpz);
+    if(gzip && uafpz)
+        bgzf_close(uafpz);
     if(rsfp)
         fclose(rsfp);
     if(refp)
@@ -2236,6 +2305,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     uint64_t num_annotations = 0;
     if(has_option(argv, argv+argc, "--prefix"))
             prefix = *(get_option(argv, argv+argc, "--prefix"));
+    BGZF* afpz = nullptr;
     if(has_annotation) {
         sum_annotation = true;
         const char* afile = *(get_option(argv, argv+argc, "--annotation"));
@@ -2248,10 +2318,17 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
         fclose(afp);
         
         afp = stdout;
-        if(no_annotation_stdout) {
+        if(gzip || no_annotation_stdout) {
             char afn[1024];
-            sprintf(afn, "%s.annotation.tsv", prefix);
-            afp = fopen(afn, "w");
+            if(gzip) {
+                sprintf(afn, "%s.annotation.tsv.gz", prefix);
+                afpz = bgzf_open(afn,"w10");
+                afp = nullptr;
+            }
+            else {
+                sprintf(afn, "%s.annotation.tsv", prefix);
+                afp = fopen(afn, "w");
+            }
         }
         assert(!annotations.empty());
         std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
@@ -2273,9 +2350,9 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
 
     assert(err == 0);
     if(is_bam)
-        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
+        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
     else
-        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
+        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
 }
 
 int get_file_format_extension(const char* fname) {
