@@ -75,6 +75,7 @@
 int UNKNOWN_FORMAT=-1;
 int BAM_FORMAT = 1;
 int BW_FORMAT = 2;
+int CRAM_FORMAT = 3;
 
 //taken from HTSlib bgzip
 int BGZF_WRITE_WINDOW_SZ = 64 * 1024;
@@ -148,6 +149,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "BAM Input:\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
     "If only the name of the BAM file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
+    "  --fasta	            Path to the reference FASTA file if a CRAM file is passed as the input file (ignored otherwise)\n"
+    "                       If not passed, references will be downloaded using the CRAM header.\n"
     "  --junctions          Extract jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
@@ -2386,8 +2389,10 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
 
 int get_file_format_extension(const char* fname) {
     int slen = strlen(fname);
-    if(strcmp("bam", &(fname[slen-3])) == 0 || strcmp("sam", &(fname[slen-3])) == 0 || strcmp("cram", &(fname[slen-4])) == 0)
+    if(strcmp("bam", &(fname[slen-3])) == 0 || strcmp("sam", &(fname[slen-3])) == 0)
         return BAM_FORMAT;
+    if(strcmp("cram", &(fname[slen-4])) == 0)
+        return CRAM_FORMAT;
     if(strcmp("bw", &(fname[slen-2])) == 0
             || strcmp("BW", &(fname[slen-2])) == 0
             || strcmp("bigwig", &(fname[slen-6])) == 0
@@ -2427,7 +2432,7 @@ int main(int argc, const char** argv) {
         return -1;
     }
 
-    bool is_bam = format_code == BAM_FORMAT;
+    bool is_bam = (format_code == BAM_FORMAT || format_code == CRAM_FORMAT);
     htsFile* bam_fh = nullptr;
     if(is_bam) {
         bam_fh = sam_open(fname_arg, "r");
@@ -2438,6 +2443,14 @@ int main(int argc, const char** argv) {
         }
         const htsFormat* format = hts_get_format(bam_fh);
         const char* hts_format_ex = hts_format_file_extension(format);
+        if(CRAM_FORMAT && has_option(argv, argv+argc, "--fasta")) { 
+            const char* fasta_file = *(get_option(argv, argv+argc, "--fasta"));
+            int ret = hts_set_fai_filename(bam_fh, fasta_file);
+            if(ret != 0) {
+                std::cerr << "ERROR: Could not use the passed in FASTA index " << fasta_file << " exiting" << std::endl;
+                return -1;
+            }
+        }
     }
     Op op = csum;
     if(has_option(argv, argv+argc, "--op")) {
