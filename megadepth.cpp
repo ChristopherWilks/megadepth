@@ -695,7 +695,7 @@ static uint64_t print_array(const char* prefix,
                             *bufptr='\t';
                             bufptr+=1;
                             bytes_written++;
-                            
+                            //idea from https://github.com/brentp/mosdepth/releases/tag/v0.2.9
                             uint32_t digits = u32toa_countlut(last_pos, bufptr, '\t');
                             bufptr+=digits+1;
                             bytes_written+=digits+1;
@@ -2472,12 +2472,25 @@ int main(int argc, const char** argv) {
         }
         const htsFormat* format = hts_get_format(bam_fh);
         const char* hts_format_ex = hts_format_file_extension(format);
-        if(CRAM_FORMAT && has_option(argv, argv+argc, "--fasta")) { 
-            const char* fasta_file = *(get_option(argv, argv+argc, "--fasta"));
-            int ret = hts_set_fai_filename(bam_fh, fasta_file);
-            if(ret != 0) {
-                std::cerr << "ERROR: Could not use the passed in FASTA index " << fasta_file << " exiting" << std::endl;
-                return -1;
+        if(CRAM_FORMAT) {
+            //from https://github.com/samtools/samtools/pull/299/files
+            //and https://github.com/brentp/mosdepth/blob/389ca702c5709654a5d4c1608073d26315ce3e35/mosdepth.nim#L867
+            //turn off decoding of unused base qualities and other unused fields for just base coverage
+            //but only if --alts isn't passed in
+            hts_set_opt(bam_fh, CRAM_OPT_DECODE_MD, 0);
+            hts_set_opt(bam_fh, CRAM_OPT_REQUIRED_FIELDS, SAM_QNAME | SAM_FLAG | SAM_RNAME | SAM_POS | SAM_MAPQ | SAM_CIGAR | SAM_RNEXT | SAM_PNEXT);
+            if(has_option(argv, argv+argc, "--alts")) {
+                //we want everything decoded
+                hts_set_opt(bam_fh, CRAM_OPT_DECODE_MD, 1);
+                hts_set_opt(bam_fh, CRAM_OPT_REQUIRED_FIELDS, SAM_QNAME | SAM_FLAG | SAM_RNAME | SAM_POS | SAM_MAPQ | SAM_CIGAR | SAM_MAPQ | SAM_RNEXT | SAM_PNEXT | SAM_TLEN | SAM_QUAL | SAM_AUX | SAM_RGAUX | SAM_SEQ);
+            }
+            if(has_option(argv, argv+argc, "--fasta")) { 
+                const char* fasta_file = *(get_option(argv, argv+argc, "--fasta"));
+                int ret = hts_set_fai_filename(bam_fh, fasta_file);
+                if(ret != 0) {
+                    std::cerr << "ERROR: Could not use the passed in FASTA index " << fasta_file << " exiting" << std::endl;
+                    return -1;
+                }
             }
         }
     }
