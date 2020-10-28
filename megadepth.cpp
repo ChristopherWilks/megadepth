@@ -46,6 +46,7 @@
 #include <htslib/tbx.h>
 #include <sys/stat.h>
 #include "bigWig.h"
+#include "countlut.hpp"
 #ifdef WINDOWS_MINGW
     #include <unordered_map>
     #include <unordered_set>
@@ -624,7 +625,7 @@ static uint64_t print_array(const char* prefix,
                         const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
-    float running_value = 0;
+    uint32_t running_value = 0;
     uint32_t last_pos = 0;
     uint64_t auc = 0;
     //from https://stackoverflow.com/questions/27401388/efficient-gzip-writing-with-gzprintf
@@ -659,6 +660,10 @@ static uint64_t print_array(const char* prefix,
     //this will print the coordinates in base-0
     uint32_t buf_len = 0;
     int bytes_written = 0;
+    char* startp = new char[32];
+    char* endp = new char[32];
+    char* valuep = new char[32];
+    float running_value_ = 0.0;
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || running_value != arr[i]) {
             if(!first) {
@@ -666,24 +671,43 @@ static uint64_t print_array(const char* prefix,
                     //based on wiggletools' AUC calculation
                     auc += (i - last_pos) * ((long) running_value);
                     if(not dont_output_coverage) {
-                        if(bwfp && first_print)
-                            bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value, 1);
-                        else if(bwfp)
-                            bwAppendIntervals(bwfp, &last_pos, &i, &running_value, 1);
+                        if(bwfp && first_print) {
+                            running_value_ = static_cast<float>(running_value);
+                            bwAddIntervals(bwfp, &chrm, &last_pos, &i, &running_value_, 1);
+                        }
+                        else if(bwfp) {
+                            running_value_ = static_cast<float>(running_value);
+                            bwAppendIntervals(bwfp, &last_pos, &i, &running_value_, 1);
+                        }
                         else {
                             if(buf_written >= num_lines_per_buf) {
                                 bufptr[0]='\0';
-                                //fprintf(cov_fh, "%s", buf); 
-                                //int bytesw = gzprintf(*gcov_fh, "%s", buf);
-                                //int bytesw = gzwrite(gcov_fh, buf, buf_len); 
-                                //fprintf(stderr,"gz bytes written %d buf_len=%d\n",bytesw,buf_len);
                                 (*printPtr)(cfh, buf, buf_len);
                                 bufptr = buf;
                                 buf_written = 0;
                                 buf_len = 0;
                             }
-                            bytes_written = sprintf(bufptr, "%s\t%u\t%u\t%.0f\n", chrm, last_pos, i, running_value);
-                            bufptr += bytes_written;
+                            memcpy(bufptr, chrm, chrnamelen);
+                            bufptr += chrnamelen;
+                            //start bytes_written from here
+                            bytes_written = chrnamelen;
+                            
+                            *bufptr='\t';
+                            bufptr+=1;
+                            bytes_written++;
+                            
+                            uint32_t digits = u32toa_countlut(last_pos, bufptr, '\t');
+                            bufptr+=digits+1;
+                            bytes_written+=digits+1;
+                            
+                            digits = u32toa_countlut(i, bufptr, '\t');
+                            bufptr+=digits+1;
+                            bytes_written+=digits+1;
+                            
+                            digits = u32toa_countlut(running_value, bufptr, '\n');
+                            bufptr+=digits+1;
+                            bytes_written+=digits+1;
+                            
                             buf_len += bytes_written;
                             buf_written++;
                         } 
@@ -701,16 +725,21 @@ static uint64_t print_array(const char* prefix,
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
             if(not dont_output_coverage) {
-                if(bwfp && first_print)
-                    bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
-                else if(bwfp)
-                    bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value, 1);
+                if(bwfp && first_print) {
+                    running_value_ = static_cast<float>(running_value);
+                    bwAddIntervals(bwfp, &chrm, &last_pos, (uint32_t*) &arr_sz, &running_value_, 1);
+                }
+                else if(bwfp) {
+                    running_value_ = static_cast<float>(running_value);
+                    bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value_, 1);
+                }
                 else {
                     if(buf_written > 0) {
                         bufptr[0]='\0';
                         (*printPtr)(cfh, buf, buf_len);
                     }
-                    buf_len = sprintf(last_line, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
+                    buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
+                    //buf_len = sprintf(last_line, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
                 }
             }
