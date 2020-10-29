@@ -4,7 +4,7 @@ set -ex
 
 #build dynamic by default
 build_type=$1
-bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } elsif($bt=~/statlib/i) { print "megadepth_statlib"; } else { print "megadepth_dynamic"; }'`
+bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth_dynamic"; }'`
 
 ln -fs CMakeLists.txt.ci CMakeLists.txt
 
@@ -23,15 +23,23 @@ if [[ ! -s libdeflate_ci ]] ; then
 fi
 ln -fs libdeflate_ci libdeflate
 
-if [[ ! -s htslib_ci ]] ; then
+htslib_to_link="htslib_ci"
+if [[ -n $build_type && "$build_type" == "static" ]]; then
+    htslib_to_link="htslib_static"
+fi
+if [[ ! -s htslib_ci || ! -s htslib_static ]] ; then
     export CPPFLAGS="-I../libdeflate"
     export LDFLAGS="-L../libdeflate -ldeflate"
-    ./get_htslib.sh linux
+    if [[ "$htslib_to_link" == "htslib_static" ]]; then
+        ./get_htslib.sh linux static
+    else
+        ./get_htslib.sh linux
+        mv htslib htslib_ci
+    fi
     export CPPFLAGS=
     export LDFLAGS=
-    mv htslib htslib_ci
 fi
-ln -fs htslib_ci htslib
+ln -fs $htslib_to_link htslib
 
 if [[ ! -s libBigWig_ci ]] ; then
     ./get_libBigWig.sh
@@ -39,23 +47,11 @@ if [[ ! -s libBigWig_ci ]] ; then
 fi
 ln -fs libBigWig_ci libBigWig
 
-set -x
-
 #compile a no-curl static version of libBigWig
 if [[ $bc == 'megadepth_static' ]]; then
     pushd libBigWig
     make clean
     make -f Makefile.nocurl lib-static
-    popd
-fi
-
-#compile a position indenpendent code static version of libBigWig
-#but *with* curl calls present, to be resolved later in the
-#dynamic linking of megadepth
-if [[ $bc == 'megadepth_statlib' ]]; then
-    pushd libBigWig
-    make clean
-    make -f Makefile.fpic lib-static
     popd
 fi
 
