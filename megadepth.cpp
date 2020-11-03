@@ -894,6 +894,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     (*total_intron_length) = (*total_intron_length) + len;
                 //are we calc coverages && do we consume query?
                 if(coverages && bam_cigar_type(cigar_op)&1) {
+                    //TODO: skip updating the coverage at every value
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                         coverages[z]++;
                         unique_coverages[z]++;
@@ -947,6 +948,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     (*total_intron_length) = (*total_intron_length) + len;
                 //are we calc coverages && do we consume query?
                 if(coverages && bam_cigar_type(cigar_op)&1) {
+                    //TODO: skip updating the coverage at every value
                     for(z = algn_end_pos; z < algn_end_pos + len; z++) {
                         coverages[z]++;
                     }
