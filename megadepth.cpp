@@ -1690,7 +1690,6 @@ public:
         uint32_t amap_count = annotations_count;
         amap = new char[amap_count*NUM_CHARS_IN_REGION_STR];
         amap_ptr = new char*[amap_count];
-        //for(typename annotation_map_t<T>::iterator aitr = amap.begin(); aitr != amap.end(); ++aitr) {
         uint64_t k = 0;
         for(auto const c : *chrm_order) {
             std::vector<T*>& annotations_for_chr = (*annotations)[c];
@@ -1702,7 +1701,6 @@ public:
                 amap += (sprintf(amap, "%s:%lu-%lu", c, (long) start, (long) end)+1);
             }
         }
-        amap_ptr[k] = amap;
         assert(k==amap_count);
         sam_itr = sam_itr_regarray(bidx, bhdr, amap_ptr, amap_count);
         if(!sam_itr) {
