@@ -63,5 +63,5 @@ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_AR=${AR} -DCMAKE_RANLIB=${RANLIB} -D CM
 make ${bc}
 popd
 cp ${DR}/${bc} ./megadepth_macos
-./megadepth_macos --version
+#./megadepth_macos --version
 rm -rf ${DR}
