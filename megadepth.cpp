@@ -607,6 +607,11 @@ static const long get_longest_target_size(const bam_hdr_t * hdr) {
     return max;
 }
 
+static void reset_array(int32_t* arr, const long arr_sz) {
+    for(long i = 0; i < arr_sz; i++)
+        arr[i] = 0;
+}
+
 static void reset_array(uint32_t* arr, const long arr_sz) {
     for(long i = 0; i < arr_sz; i++)
         arr[i] = 0;
@@ -615,7 +620,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 typedef hashmap<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
-                        const uint32_t* arr, 
+                        const int32_t* arr, 
                         const long arr_sz,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
@@ -665,7 +670,7 @@ static uint64_t print_array(const char* prefix,
     char* valuep = new char[32];
     float running_value_ = 0.0;
     for(uint32_t i = 0; i < arr_sz; i++) {
-        if(first || running_value != arr[i]) {
+        if(first || arr[i] != 0) {
             if(!first) {
                 if(running_value > 0 || !skip_zeros) {
                     //based on wiggletools' AUC calculation
@@ -687,7 +692,7 @@ static uint64_t print_array(const char* prefix,
                                 buf_written = 0;
                                 buf_len = 0;
                             }
-                            memcpy(bufptr, chrm, chrnamelen);
+                            std::memcpy(bufptr, chrm, chrnamelen);
                             bufptr += chrnamelen;
                             //start bytes_written from here
                             bytes_written = chrnamelen;
@@ -716,7 +721,7 @@ static uint64_t print_array(const char* prefix,
                 }
             }
             first = false;
-            running_value = arr[i];
+            running_value += arr[i];
             last_pos = i;
         }
     }
@@ -808,8 +813,8 @@ static void extract_junction(const int op, const int len, args_list* out) {
 
 
 typedef hashmap<std::string, uint32_t*> read2len;
-static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages, 
-                                        uint32_t* unique_coverages, const bool double_count, 
+static const int32_t calculate_coverage(const bam1_t *rec, int32_t* coverages, 
+                                        int32_t* unique_coverages, const bool double_count, 
                                         const int min_qual, read2len* overlapping_mates,
                                         int32_t* total_intron_length) {
     int32_t refpos = rec->core.pos;
@@ -883,112 +888,64 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
         }
     }
     mspans_idx = 0;
-    if(unique && passing_qual) {
-        int32_t lastref = 0;
-        for (k = 0; k < rec->core.n_cigar; ++k) {
-            const int cigar_op = bam_cigar_op(cigar[k]);
-            //do we consume ref?
-            if(bam_cigar_type(cigar_op)&2) {
-                const int32_t len = bam_cigar_oplen(cigar[k]);
-                if(cigar_op == BAM_CREF_SKIP)
-                    (*total_intron_length) = (*total_intron_length) + len;
-                //are we calc coverages && do we consume query?
-                if(coverages && bam_cigar_type(cigar_op)&1) {
-                    //TODO: skip updating the coverage at every value
-                    for(z = algn_end_pos; z < algn_end_pos + len; z++) {
-                        coverages[z]++;
-                        unique_coverages[z]++;
-                    }
-                    //now fixup overlapping segment but only if mate passed quality
-                    if(n_mspans > 0 && algn_end_pos < mendpos) {
-                        //loop until we find the next overlapping span
-                        //if are current segment is too early we just keep the span index where it is
-                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
-                            mspans_idx++;
-                        int32_t cur_end = algn_end_pos + len;
-                        int32_t left_end = algn_end_pos;
-                        if(left_end < mspans[mspans_idx][0])
-                            left_end = mspans[mspans_idx][0];
-                        //check 1) we've still got mate spans 2) current segment overlaps the current mate span
-                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
-                                                    && cur_end > mspans[mspans_idx][0]) {
-                            //set right end of segment to decrement
-                            int32_t right_end = cur_end;
-                            int32_t next_left_end = left_end;
-                            if(right_end >= mspans[mspans_idx][1]) {
-                                right_end = mspans[mspans_idx][1];
-                                //if our segment is greater than the previous mate's
-                                //also increment the mate spans index
-                                mspans_idx++;
-                                if(mspans_idx < n_mspans)
-                                    next_left_end = mspans[mspans_idx][0];
-                            }
-                            else {
-                                next_left_end = mspans[mspans_idx][1];
-                            }
-                            for(z = left_end; z < right_end; z++) {
-                                coverages[z]--;
-                                if(mate_passes_quality)
-                                    unique_coverages[z]--;
-                            }
-                            left_end = next_left_end;
-                        }
-                    }    
+    int32_t lastref = 0;
+    for (k = 0; k < rec->core.n_cigar; ++k) {
+        const int cigar_op = bam_cigar_op(cigar[k]);
+        //do we consume ref?
+        if(bam_cigar_type(cigar_op)&2) {
+            const int32_t len = bam_cigar_oplen(cigar[k]);
+            if(cigar_op == BAM_CREF_SKIP)
+                (*total_intron_length) = (*total_intron_length) + len;
+            //are we calc coverages && do we consume query?
+            if(coverages && bam_cigar_type(cigar_op)&1) {
+                coverages[algn_end_pos]++;
+                coverages[algn_end_pos+len]--;
+                if(unique && passing_qual) {
+                    unique_coverages[algn_end_pos]++;
+                    unique_coverages[algn_end_pos+len]--;
                 }
-                algn_end_pos += len;
-            }
-        }
-    } else {
-        for (k = 0; k < rec->core.n_cigar; ++k) {
-            const int cigar_op = bam_cigar_op(cigar[k]);
-            //do we consume ref?
-            if(bam_cigar_type(cigar_op)&2) {
-                const int32_t len = bam_cigar_oplen(cigar[k]);
-                if(cigar_op == BAM_CREF_SKIP)
-                    (*total_intron_length) = (*total_intron_length) + len;
-                //are we calc coverages && do we consume query?
-                if(coverages && bam_cigar_type(cigar_op)&1) {
-                    //TODO: skip updating the coverage at every value
-                    for(z = algn_end_pos; z < algn_end_pos + len; z++) {
-                        coverages[z]++;
-                    }
-                    //now fixup overlapping segment
-                    if(n_mspans > 0 && algn_end_pos < mendpos) {
-                        //loop until we find the next overlapping span
-                        //if are current segment is too early we just keep the span index where it is
-                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
-                            mspans_idx++;
-                        int32_t cur_end = algn_end_pos + len;
-                        int32_t left_end = algn_end_pos;
-                        if(left_end < mspans[mspans_idx][0])
-                            left_end = mspans[mspans_idx][0];
-                        //check 1) we've still got mate spans 2) current segment overlaps the current mate span
-                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
-                                                    && cur_end > mspans[mspans_idx][0]) {
-                            //set right end of segment to decrement
-                            int32_t right_end = cur_end;
-                            int32_t next_left_end = left_end;
-                            if(right_end >= mspans[mspans_idx][1]) {
-                                right_end = mspans[mspans_idx][1];
-                                //if our segment is greater than the previous mate's
-                                //also increment the mate spans index
-                                //delete[] mspans[mspans_idx];
-                                mspans_idx++;
-                                if(mspans_idx < n_mspans)
-                                    next_left_end = mspans[mspans_idx][0];
-                            }
-                            else {
-                                next_left_end = mspans[mspans_idx][1];
-                            }
-                            for(z = left_end; z < right_end; z++) {
-                                coverages[z]--;
-                            }
-                            left_end = next_left_end;
-                        }
-                    }    
+                //TODO: skip updating the coverage at every value
+                /*for(z = algn_end_pos; z < algn_end_pos + len; z++) {
+                    coverages[z]++;
+                    unique_coverages[z]++;
                 }
-                algn_end_pos += len;
+                //now fixup overlapping segment but only if mate passed quality
+                if(n_mspans > 0 && algn_end_pos < mendpos) {
+                    //loop until we find the next overlapping span
+                    //if are current segment is too early we just keep the span index where it is
+                    while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
+                        mspans_idx++;
+                    int32_t cur_end = algn_end_pos + len;
+                    int32_t left_end = algn_end_pos;
+                    if(left_end < mspans[mspans_idx][0])
+                        left_end = mspans[mspans_idx][0];
+                    //check 1) we've still got mate spans 2) current segment overlaps the current mate span
+                    while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
+                                                && cur_end > mspans[mspans_idx][0]) {
+                        //set right end of segment to decrement
+                        int32_t right_end = cur_end;
+                        int32_t next_left_end = left_end;
+                        if(right_end >= mspans[mspans_idx][1]) {
+                            right_end = mspans[mspans_idx][1];
+                            //if our segment is greater than the previous mate's
+                            //also increment the mate spans index
+                            mspans_idx++;
+                            if(mspans_idx < n_mspans)
+                                next_left_end = mspans[mspans_idx][0];
+                        }
+                        else {
+                            next_left_end = mspans[mspans_idx][1];
+                        }
+                        for(z = left_end; z < right_end; z++) {
+                            coverages[z]--;
+                            if(mate_passes_quality)
+                                unique_coverages[z]--;
+                        }
+                        left_end = next_left_end;
+                    }
+                }*/    
             }
+            algn_end_pos += len;
         }
     }
     if(mspans) {
@@ -1067,7 +1024,7 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
 enum Op { csum, cmean, cmin, cmax };
 typedef hashmap<std::string, int> str2op;
 template <typename T>
-static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, Op op, bool just_auc = false, int keep_order_idx = -1) {
+static void sum_annotations(const int32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, Op op, bool just_auc = false, int keep_order_idx = -1) {
     unsigned long z, j;
     int (*printPtr) (char* buf, const char*, long, long, T, double*, long) = &print_shared;
     int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
@@ -1800,8 +1757,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     //largest human chromosome is ~249M bases
     //long chr_size = 250000000;
     long chr_size = -1;
-    uint32_t* coverages = nullptr;
-    uint32_t* unique_coverages = nullptr;
+    int32_t* coverages = nullptr;
+    int32_t* unique_coverages = nullptr;
     bool compute_coverage = false;
     int bw_unique_min_qual = 0;
     read2len overlapping_mates;
@@ -1836,7 +1793,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(coverage_opt || auc_opt || annotation_opt || bigwig_opt) {
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
-        coverages = new uint32_t[chr_size];
+        coverages = new int32_t[chr_size];
         if(bigwig_opt)
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
         if(unique) {
@@ -1858,7 +1815,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             if(bigwig_opt)
                 ubwfp = create_bigwig_file(hdr, prefix, "unique.bw");
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
-            unique_coverages = new uint32_t[chr_size];
+            unique_coverages = new int32_t[chr_size];
         }
         if(coverage_opt && !bigwig_opt && no_coverage_stdout) {
             char cov_fn[1024];
@@ -1959,6 +1916,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     uint64_t num_annotations_ = 0;
     if(dont_output_coverage && !auc_opt)
         num_annotations_ = num_annotations;
+    int num_cigar_ops = process_cigar_callbacks.size();
+    if(num_cigar_ops > 0)
+        fprintf(stderr,"processing cigar op callbacks\n");
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     //while(sam_read1(bam_fh, hdr, rec) >= 0) {
@@ -2131,7 +2091,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 }
             }
             //*******Run various cigar-related functions for 1 pass through the cigar string
-            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
+            if(num_cigar_ops > 0)
+                process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
 
             //*******Extract jx co-occurrences (not all junctions though)
             if(extract_junctions) {
