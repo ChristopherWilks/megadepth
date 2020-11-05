@@ -718,9 +718,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(compute_coverage) {
         if(ptid != -1) {
+            chr_size = hdr->target_len[ptid];
             //sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt)
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, nullptr, cov_fh, gcov_fh, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, chr_size, false, nullptr, cov_fh, gcov_fh, dont_output_coverage);
         }
         delete[] coverages;
     }
