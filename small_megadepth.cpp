@@ -11,13 +11,14 @@
 #include <vector>
 #include <thread>
 #include <zlib.h>
-#include<iterator>
+#include <iterator>
 
+#include <sys/stat.h>
 #include <htslib/sam.h>
 #include <htslib/bgzf.h>
 #include <htslib/tbx.h>
-#include <sys/stat.h>
 #include "bigWig.h"
+//#include "tabix_set_meta.h"
 #include "countlut.hpp"
 #ifdef WINDOWS_MINGW
     #include <unordered_map>
@@ -228,6 +229,7 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 typedef hashmap<uint32_t,uint32_t> int2int;
 static uint64_t print_array(const char* prefix, 
                         char* chrm,
+                        int32_t tid,
                         const int32_t* arr, 
                         const long arr_sz,
                         const bool skip_zeros,
@@ -235,6 +237,7 @@ static uint64_t print_array(const char* prefix,
                         FILE* cov_fh,
                         //gzFile& gcov_fh,
                         BGZF* gcov_fh,
+                        hts_idx_t* cidx,
                         const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
@@ -277,6 +280,7 @@ static uint64_t print_array(const char* prefix,
     char* endp = new char[32];
     char* valuep = new char[32];
     float running_value_ = 0.0;
+    int check = 0;
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(first || arr[i] != 0) {
             if(!first) {
@@ -293,13 +297,13 @@ static uint64_t print_array(const char* prefix,
                             bwAppendIntervals(bwfp, &last_pos, &i, &running_value_, 1);
                         }
                         else {
-                            if(buf_written >= num_lines_per_buf) {
+                            /*if(buf_written >= num_lines_per_buf) {
                                 bufptr[0]='\0';
                                 (*printPtr)(cfh, buf, buf_len);
                                 bufptr = buf;
                                 buf_written = 0;
                                 buf_len = 0;
-                            }
+                            }*/
                             std::memcpy(bufptr, chrm, chrnamelen);
                             bufptr += chrnamelen;
                             //start bytes_written from here
@@ -320,9 +324,19 @@ static uint64_t print_array(const char* prefix,
                             digits = u32toa_countlut(running_value, bufptr, '\n');
                             bufptr+=digits+1;
                             bytes_written+=digits+1;
+                            bufptr[0]='\0';
+                            (*printPtr)(cfh, buf, bytes_written);
+                            //TODO add this for last line
+                            if(cidx) {
+                                if(hts_idx_push(cidx, tid, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0)
+                                    fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, exiting\n",chrm,last_pos,i);
+                            }
                             
                             buf_len += bytes_written;
                             buf_written++;
+                            bufptr = buf;
+                            buf_written = 0;
+                            buf_len = 0;
                         } 
                         first_print = false;
                     }
@@ -347,10 +361,10 @@ static uint64_t print_array(const char* prefix,
                     bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value_, 1);
                 }
                 else {
-                    if(buf_written > 0) {
+                    /*if(buf_written > 0) {
                         bufptr[0]='\0';
                         (*printPtr)(cfh, buf, buf_len);
-                    }
+                    }*/
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
                     //buf_len = sprintf(last_line, "%s\t%u\t%lu\t%.0f\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
@@ -591,6 +605,7 @@ public:
 };
 
 
+
 template <typename T>
 int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
@@ -641,6 +656,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool no_coverage_stdout = gzip || has_option(argv, argv+argc, "--no-coverage-stdout");
     //gzFile gcov_fh;
     BGZF* gcov_fh = nullptr;
+    hts_idx_t* cidx = nullptr;
     
     if(coverage_opt) {
         compute_coverage = true;
@@ -654,6 +670,13 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 //gcov_fh = gzopen(cov_fn,"w1");
                 gcov_fh = bgzf_open(cov_fn,"w10");
                 cov_fh = nullptr;
+                //from https://github.com/samtools/htslib/blob/c9175183c42382f1030503e88ca7e60cb9c08536/sam.c#L923
+                //and https://github.com/brentp/hts-nim/blob/0eaa867e747d3bc844b5ecb575796e4688b966f5/src/hts/csi.nim#L34
+                int min_shift = 14;
+                int n_lvls = (TBX_MAX_SHIFT - min_shift + 2) / 3;
+                int fmt = HTS_FMT_CSI;
+                //n_lvls = adjust_n_lvls(min_shift, n_lvls, chr_size);
+                cidx = hts_idx_init(0, fmt, 0, min_shift, n_lvls);
             }
             else {
                 sprintf(cov_fn, "%s.coverage.tsv", prefix);
@@ -707,7 +730,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         chr_size = hdr->target_len[ptid];
                         //sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt)
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, chr_size, false, nullptr, cov_fh, gcov_fh, dont_output_coverage);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, nullptr, cov_fh, gcov_fh, cidx, dont_output_coverage);
                     }
                     reset_array(coverages, chr_size);
                 }
@@ -721,12 +744,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             chr_size = hdr->target_len[ptid];
             //sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt)
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, chr_size, false, nullptr, cov_fh, gcov_fh, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, nullptr, cov_fh, gcov_fh, cidx, dont_output_coverage);
         }
         delete[] coverages;
     }
     //for writing out an index for BGZipped coverage BED files
-    //based on Tabix source: https://github.com/samtools/htslib/blob/develop/tabix.c
+    //mostly from Tabix source: https://github.com/samtools/htslib/blob/develop/tabix.c
     char temp_afn[1024];
     tbx_conf_t tconf = tbx_conf_bed;
     int min_shift = 14; 
@@ -734,11 +757,22 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fclose(cov_fh);
     if(gzip && gcov_fh) {
         sprintf(temp_afn, "%s.coverage.tsv.gz", prefix);
-        bgzf_close(gcov_fh);
-        if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
-            fprintf(stderr,"Error dumping BGZF index for base coverage, skipping\n");
+        char temp_afni[1024];
+        sprintf(temp_afni, "%s.coverage.tsv.gz.csi", prefix);
+        if(hts_idx_finish(cidx, bgzf_tell(gcov_fh)) != 0)
+            fprintf(stderr,"Error finishing BGZF index for base coverage, skipping\n");
+        else {
+            /*tbx_t *tbx;
+            tbx = (tbx_t*)calloc(1, sizeof(tbx_t));
+            tbx->conf = tconf; 
+            tbx->idx = cidx;
+            tbx_set_meta(tbx);*/
+            if(hts_idx_save_as(cidx, temp_afn, temp_afni, HTS_FMT_CSI) != 0)
+                fprintf(stderr,"Error saving BGZF index for base coverage, skipping\n");
         }
+        bgzf_close(gcov_fh);
     }
+
     return 0;
 }
 
