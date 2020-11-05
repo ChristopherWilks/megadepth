@@ -608,8 +608,7 @@ static const long get_longest_target_size(const bam_hdr_t * hdr) {
 }
 
 static void reset_array(uint32_t* arr, const long arr_sz) {
-    for(long i = 0; i < arr_sz; i++)
-        arr[i] = 0;
+    std::memset(arr, 0, sizeof(uint32_t) * arr_sz);
 }
                                 
 typedef hashmap<uint32_t,uint32_t> int2int;
@@ -1957,6 +1956,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     uint64_t num_annotations_ = 0;
     if(dont_output_coverage && !auc_opt)
         num_annotations_ = num_annotations;
+    int num_cigar_ops = process_cigar_callbacks.size();
+
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     //while(sam_read1(bam_fh, hdr, rec) >= 0) {
@@ -1989,6 +1990,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             int32_t tid = rec->core.tid;
             int32_t tlen = rec->core.isize;
 
+            if(tid != ptid && ptid != -1)
+                chr_size = hdr->target_len[ptid];
             
             if(softclip_file)
                 total_number_sequence_bases_processed += c->l_qseq;
@@ -2000,19 +2003,19 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt || bigwig_opt || auc_opt) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, chr_size, false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, chr_size, false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
-                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, op, !annotation_opt, keep_order_idx);
+                            sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], chr_size, hdr->target_name[ptid], afp, &annotated_auc, op, !annotation_opt, keep_order_idx);
                             if(unique) {
                                 keep_order_idx = keep_order?3:-1;
-                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, op, !annotation_opt, keep_order_idx);
+                                sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], chr_size, hdr->target_name[ptid], uafp, &unique_annotated_auc, op, !annotation_opt, keep_order_idx);
                             }
                             if(!keep_order)
                                 annotation_chrs_seen->insert(hdr->target_name[ptid]);
@@ -2069,7 +2072,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 int32_t refpos = rec->core.pos;
                 if(tid != ptid) {
                     if(ptid != -1) {
-                        for(uint32_t j = 0; j < hdr->target_len[ptid]; j++) {
+                        for(uint32_t j = 0; j < chr_size; j++) {
                             if(starts[j] > 0)
                                 fprintf(rsfp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, starts[j]);
                             if(ends[j] > 0)
@@ -2129,7 +2132,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 }
             }
             //*******Run various cigar-related functions for 1 pass through the cigar string
-            process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
+            if(num_cigar_ops > 0)
+                process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
 
             //*******Extract jx co-occurrences (not all junctions though)
             if(extract_junctions) {
@@ -2206,6 +2210,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             }
         }
     }
+    if(ptid != -1)
+        chr_size = hdr->target_len[ptid];
     delete(cigar_str);
     if(jxs_file) {
         fclose(jxs_file);
@@ -2219,18 +2225,18 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, hdr->target_len[ptid], false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], coverages, chr_size, false, bwfp, cov_fh, gcov_fh, dont_output_coverage);
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, hdr->target_len[ptid], false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], unique_coverages, chr_size, false, ubwfp, cov_fh, gcov_fh, dont_output_coverage);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
                 int keep_order_idx = keep_order?2:-1;
-                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, op, false, keep_order_idx);
+                sum_annotations(coverages, (*annotations)[hdr->target_name[ptid]], chr_size, hdr->target_name[ptid], afp, &annotated_auc, op, false, keep_order_idx);
                 if(unique) {
                     keep_order_idx = keep_order?3:-1;
-                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, op, false, keep_order_idx);
+                    sum_annotations(unique_coverages, (*annotations)[hdr->target_name[ptid]], chr_size, hdr->target_name[ptid], uafp, &unique_annotated_auc, op, false, keep_order_idx);
                 }
                 if(!keep_order)
                     annotation_chrs_seen->insert(hdr->target_name[ptid]);
@@ -2261,7 +2267,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(compute_ends) {
         if(ptid != -1) {
-            for(uint32_t j = 0; j < hdr->target_len[ptid]; j++) {
+            for(uint32_t j = 0; j < chr_size; j++) {
                 if(starts[j] > 0)
                     fprintf(rsfp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, starts[j]);
                 if(ends[j] > 0)
