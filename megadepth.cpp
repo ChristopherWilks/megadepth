@@ -35,7 +35,6 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
-//#include <stdlib.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -670,7 +669,7 @@ static uint64_t print_array(const char* prefix,
       //this assumes we're never going to have coverage and windowed coverage be different in terms of --gzip
       if(!wcov_fh) {
         printPtr = &my_gzwrite;
-        cfh = gwcov_fh; 
+        wcfh = gwcov_fh; 
       }
     }
 
@@ -686,13 +685,18 @@ static uint64_t print_array(const char* prefix,
     char* window_output_line = new char[1024];
     int window_bytes_written = -1;
     uint32_t window_start = 0;
+    //make sure we track this chromosome in whatever index we're building
+    //if we may it this far, means the chromosome had some alignments
+    if(chrms_in_cidx && chrms_in_cidx[tid+1] == 0)
+        chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
+
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(print_windowed_coverage) {
             if(wcounter == window_size) {
                 if(op == csum)
                     window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%lu\n", chrm, window_start, i, wsum); 
                 else if(op == cmean) {
-                    double wmean = wsum / window_size;
+                    double wmean = (double)wsum / (double)window_size;
                     window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
                 }
                 (*printPtr)(wcfh, window_output_line, window_bytes_written);
@@ -740,8 +744,6 @@ static uint64_t print_array(const char* prefix,
                             bytes_written+=digits+1;
                             bufptr[0]='\0';
                             (*printPtr)(cfh, buf, bytes_written);
-                            if(chrms_in_cidx && chrms_in_cidx[tid+1] == 0)
-                                chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
                             if(cidx) {
                                 if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
                                     fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n",chrm,last_pos,i, tid, chrms_in_cidx[tid+1]-1);
@@ -771,7 +773,7 @@ static uint64_t print_array(const char* prefix,
                 window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%lu\n", chrm, window_start, arr_sz, wsum); 
             else if(op == cmean) {
                 window_size = arr_sz - window_start;
-                double wmean = wsum / window_size;
+                double wmean = (double)wsum / (double)window_size;
                 window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
             }
             (*printPtr)(wcfh, window_output_line, window_bytes_written);
@@ -790,8 +792,6 @@ static uint64_t print_array(const char* prefix,
                 else {
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
-                    if(chrms_in_cidx && chrms_in_cidx[tid+1] == 0)
-                        chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
                     if(cidx)
                         if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, arr_sz, bgzf_tell((BGZF*) cfh), 1) < 0)
                             fprintf(stderr,"error writing last line of chromosome in index at coordinates: %s:%u-%ld, exiting\n",chrm,last_pos,arr_sz);
@@ -2129,7 +2129,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(ptid != -1) {
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
-                        if(coverage_opt || bigwig_opt || auc_opt) {
+                        if(coverage_opt || bigwig_opt || auc_opt || window_size > 0) {
                             all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
@@ -2351,30 +2351,56 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(compute_coverage) {
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
-            if(coverage_opt || bigwig_opt || auc_opt) {
+            if(coverage_opt || bigwig_opt || auc_opt || window_size > 0) {
                 all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
-                if(coverage_opt) {
+                if(coverage_opt || window_size > 0) {
                     //now print out all contigs/chrms in header which had 0 coverage, only do this for the "all reads" coverage
                     char* last_interval_line = new char[1024];
                     int line_len = 0;
                     int ret = 0;
+                    int (*printPtr) (void* fh, char* buf, uint32_t buf_len) = &my_write;
+                    void* wcfh = afp; 
+                    if(!afp) {
+                        printPtr = &my_gzwrite;
+                        wcfh = afpz; 
+                    }
+                    uint32_t wi = 0;
+                    char* val = new char[10];
+                    sprintf(val,"%d",0);
+                    if(op == cmean)
+                        sprintf(val,"%.2f",0.00);
                     for(int ci=0; ci < hdr->n_targets; ci++) {
+                        uint32_t chr_len = hdr->target_len[ci];
+                        char* chr_name = hdr->target_name[ci];
                         if(chrms_in_cidx[ci+1] == 0) {
                             chrms_in_cidx[ci+1] = ++chrms_in_cidx[0];
-                            line_len = sprintf(last_interval_line, "%s\t0\t%u\t0\n", hdr->target_name[ci], hdr->target_len[ci]); 
-                            if(gcov_fh) {
-                                ret = bgzf_write(gcov_fh, last_interval_line, line_len);
-                                if(cidx) {
-                                    //fprintf(stderr,"writing empty chrm lines to index\n");
-                                    if(hts_idx_push(cidx, chrms_in_cidx[ci+1]-1, 0, hdr->target_len[ci], bgzf_tell(gcov_fh), 1) < 0) {
-                                        fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n", hdr->target_name[ci], 0, hdr->target_len[ci], ci, chrms_in_cidx[ci+1]-1);
-                                        exit(-1);
-                                    }
+                            if(window_size > 0) {
+                                for(wi=0; wi < chr_len; wi+=window_size) {
+                                    line_len = sprintf(last_interval_line, "%s\t%u\t%u\t%s\n", chr_name, wi, wi+window_size, val); 
+                                    (*printPtr)(wcfh, last_interval_line, line_len);
+                                }
+                                int remain = chr_len % window_size;
+                                if(remain > 0) {
+                                    line_len = sprintf(last_interval_line, "%s\t%u\t%u\t%s\n", chr_name, wi, chr_len, val); 
+                                    (*printPtr)(wcfh, last_interval_line, line_len);
                                 }
                             }
-                            else
-                                //fprintf(cov_fh, "%s", last_interval_line);
-                                ret = fwrite(last_interval_line, sizeof(char), line_len, cov_fh);
+                            if(coverage_opt) {
+                                line_len = sprintf(last_interval_line, "%s\t0\t%u\t0\n", chr_name, chr_len); 
+                                if(gcov_fh) {
+                                    ret = bgzf_write(gcov_fh, last_interval_line, line_len);
+                                    if(cidx) {
+                                        //fprintf(stderr,"writing empty chrm lines to index\n");
+                                        if(hts_idx_push(cidx, chrms_in_cidx[ci+1]-1, 0, hdr->target_len[ci], bgzf_tell(gcov_fh), 1) < 0) {
+                                            fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n", hdr->target_name[ci], 0, hdr->target_len[ci], ci, chrms_in_cidx[ci+1]-1);
+                                            exit(-1);
+                                        }
+                                    }
+                                }
+                                else
+                                    //fprintf(cov_fh, "%s", last_interval_line);
+                                    ret = fwrite(last_interval_line, sizeof(char), line_len, cov_fh);
+                            }
                         }
                     }
                 }
@@ -2453,6 +2479,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(gzip && afpz) {
         sprintf(temp_afn, "%s.annotation.tsv.gz", prefix);
+        if(window_size > 0)
+            sprintf(temp_afn, "%s.window.tsv.gz", prefix);
         bgzf_close(afpz);
         if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
             fprintf(stderr,"Error dumping BGZF index for annotation coverage (all alignments), skipping\n");
@@ -2521,7 +2549,6 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     BGZF* afpz = nullptr;
     uint32_t window_size = 0;
     if(has_annotation) {
-        sum_annotation = true;
         const char* afile = *(get_option(argv, argv+argc, "--annotation"));
         if(!afile) {
             std::cerr << "No argument to --annotation" << std::endl;
@@ -2538,6 +2565,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
             sprintf(output_prefix, "annotation");
+            sum_annotation = true;
         }
         else
             fprintf(stderr, "computing coverage windows of length %u\n", window_size);
