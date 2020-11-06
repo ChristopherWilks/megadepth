@@ -39,9 +39,10 @@
 #include <vector>
 #include <thread>
 #include <zlib.h>
-#include<iterator>
+#include <iterator>
 
 #include <htslib/sam.h>
+#include <htslib/hts.h>
 #include <htslib/bgzf.h>
 #include <htslib/tbx.h>
 #include <sys/stat.h>
@@ -623,6 +624,8 @@ static uint64_t print_array(const char* prefix,
                         //gzFile& gcov_fh,
                         BGZF* gcov_fh,
                         hts_idx_t* cidx,
+                        //str2int* chrms_in_cidx,
+                        int* chrms_in_cidx,
                         const bool dont_output_coverage = false) {
     bool first = true;
     bool first_print = true;
@@ -705,8 +708,20 @@ static uint64_t print_array(const char* prefix,
                             (*printPtr)(cfh, buf, bytes_written);
                             //TODO add this for last line
                             if(cidx) {
-                                if(hts_idx_push(cidx, tid, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0)
-                                    fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, exiting\n",chrm,last_pos,i);
+                                //change this to an array lookup based on header
+                                if(chrms_in_cidx[tid+1] == 0) {
+                                    chrms_in_cidx[0]++;
+                                    chrms_in_cidx[tid+1] = chrms_in_cidx[0];
+                                    fprintf(stderr,"add new chrm to index: %s tid: %d idx tid: %d\n", chrm, tid, chrms_in_cidx[tid+1]-1);
+                                }
+                                //int ctid = chrms_in_cidx.size()-1;
+                                if(chrms_in_cidx[tid+1]-1 == 30)
+                                    fprintf(stderr,"interval with tid 30: %s:%u-%u tid: %d\n",chrm,last_pos,i,tid);
+                                if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
+                                //if(hts_idx_push(cidx, tid, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
+                                    fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n",chrm,last_pos,i, tid, chrms_in_cidx[tid+1]-1);
+                                    exit(-1);
+                                }
                             }
                             
                             buf_len += bytes_written;
@@ -1731,6 +1746,65 @@ public:
     ~BAMIterator() { if(sam_itr) { hts_itr_destroy(sam_itr);} }
 };
 
+int finalize_tabix_index(const char* fname, const char* ifname, BGZF* bfh, hts_idx_t* cidx, int* chrms_in_cidx, const bam_hdr_t *hdr) {
+    //this function assumes that the chromosome (chrm) order indexes have been tracked while adding
+    //intervals to the BGZip file we're finalizing the index for here
+    //but now we need to create the final array of chrm order indexes mapped to chrm names
+    //while tracking the total length of all chrm names catted together
+    //this will serve as part of the index metadata
+    //
+    //1) track order by which chromosomes are added to index
+    //2) create index2chromosome name
+    //3) track total chromosome name length (concatenated overall names including the separating '\0's)
+    if(hts_idx_finish(cidx, bgzf_tell(bfh)) != 0) {
+        fprintf(stderr,"Error finishing BGZF index for base coverage, skipping\n");
+        return -1;
+    }
+    //largely lifted from: https://github.com/samtools/htslib/blob/4162046b28a7d9d8a104ce28086d9467cc05c212/tbx.c#L216
+    tbx_t *tbx;
+    tbx = (tbx_t*)calloc(1, sizeof(tbx_t));
+    tbx->conf = tbx_conf_bed; 
+    tbx->idx = cidx;
+    //first slot is the number of chromosomes present in the index
+    int num_chrms = chrms_in_cidx[0]; 
+    int i, all_cnames_len = 0, l_nm; 
+    uint32_t x[7];
+    memcpy(x, &tbx->conf, 24);
+    char** name = new char*[num_chrms];
+    int k = 0;
+    for(i=1; i < num_chrms+1; i++) {
+        if(chrms_in_cidx[i] > 0) {
+            all_cnames_len += strlen(hdr->target_name[i-1]) + 1; //+1 for '\0'
+            //now copy chrm name into names
+            name[k++] = hdr->target_name[i-1];
+        }
+    }
+    i = 0;
+    
+    l_nm = x[6] = all_cnames_len;
+    
+    uint8_t* meta = new uint8_t[l_nm + 28]; 
+
+    if (ed_is_big())
+        for (i = 0; i < 7; ++i)
+            x[i] = ed_swap_4(x[i]);
+    memcpy(meta, x, 28);
+    int l = 0;
+    for (l = 28, i = 0; i < num_chrms; ++i) {
+        int xi = strlen(name[i]) + 1;
+        memcpy(meta + l, name[i], xi);
+        l += xi;
+    }
+    //delete name;
+    hts_idx_set_meta(tbx->idx, l, meta, 0);
+
+    if(hts_idx_save_as(cidx, fname, ifname, HTS_FMT_CSI) != 0) {
+        fprintf(stderr,"Error saving BGZF index for base coverage, skipping\n");
+        return -1;
+    }
+    return 0;
+}
+
 
 template <typename T>
 int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
@@ -1970,6 +2044,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         num_annotations_ = num_annotations;
     int num_cigar_ops = process_cigar_callbacks.size();
 
+    //str2int chrms_in_cidx;
+    //first slot is the number of actually present chromosomes in the index
+    //init to 0's
+    int* chrms_in_cidx = new int[hdr->n_targets+1]{};
+
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     //while(sam_read1(bam_fh, hdr, rec) >= 0) {
@@ -2015,10 +2094,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt || bigwig_opt || auc_opt) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, dont_output_coverage);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, chrms_in_cidx, dont_output_coverage);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, dont_output_coverage);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, nullptr, dont_output_coverage);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
@@ -2237,10 +2316,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, chrms_in_cidx, dont_output_coverage);
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, dont_output_coverage);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, nullptr, dont_output_coverage);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -2301,8 +2380,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     //for writing out an index for BGZipped coverage BED files
     //based on Tabix source: https://github.com/samtools/htslib/blob/develop/tabix.c
     char temp_afn[1024];
+    int min_shift = 14;
     tbx_conf_t tconf = tbx_conf_bed;
-    int min_shift = 14; 
     if(cov_fh && cov_fh != stdout)
         fclose(cov_fh);
     if(gzip && gcov_fh) {
@@ -2312,17 +2391,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         //if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
         char temp_afni[1024];
         sprintf(temp_afni, "%s.coverage.tsv.gz.csi", prefix);
-        if(hts_idx_finish(cidx, bgzf_tell(gcov_fh)) != 0)
-            fprintf(stderr,"Error finishing BGZF index for base coverage, skipping\n");
-        else {
-            /*tbx_t *tbx;
-            tbx = (tbx_t*)calloc(1, sizeof(tbx_t));
-            tbx->conf = tconf; 
-            tbx->idx = cidx;
-            tbx_set_meta(tbx);*/
-            if(hts_idx_save_as(cidx, temp_afn, temp_afni, HTS_FMT_CSI) != 0)
-                fprintf(stderr,"Error saving BGZF index for base coverage, skipping\n");
-        }
+        int check = finalize_tabix_index(temp_afn, temp_afni, gcov_fh, cidx, chrms_in_cidx, hdr);
         bgzf_close(gcov_fh);
     }
     if(gzip && afpz) {
