@@ -65,7 +65,7 @@ diff bw2.max.annotation.tsv tests/testbw2.bed.max
 
 #now test same-start alignments for overlapping pairs
 ./md_runner tests/test3.bam --auc --coverage --prefix t3 --no-auc-stdout > t3.tsv
-diff <(head -3 tests/test3.out.tsv) t3.tsv
+diff <(head -197 tests/test3.out.tsv) t3.tsv
 diff <(tail -n1 tests/test3.out.tsv) t3.auc.tsv
 
 #with uniques
