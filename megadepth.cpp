@@ -35,6 +35,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+//#include <stdlib.h>
 #include <string>
 #include <vector>
 #include <thread>
@@ -111,6 +112,8 @@ static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 //used for buffering up text/gz output
 static const int OUT_BUFF_SZ=4000000;
 static const int COORD_STR_LEN=34;
+
+enum Op { csum, cmean, cmin, cmax };
 
 static const void print_version() {
     //fprintf(stderr, "megadepth %s\n", string(MEGADEPTH_VERSION).c_str());
@@ -610,6 +613,7 @@ static const long get_longest_target_size(const bam_hdr_t * hdr) {
     return max;
 }
 
+
 static void reset_array(uint32_t* arr, const long arr_sz) {
     std::memset(arr, 0, sizeof(uint32_t) * arr_sz);
 }
@@ -623,10 +627,14 @@ static uint64_t print_array(const char* prefix,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         FILE* cov_fh,
-                        BGZF* gcov_fh,
-                        hts_idx_t* cidx,
-                        int* chrms_in_cidx,
-                        const bool dont_output_coverage = false) {
+                        const bool dont_output_coverage = false,
+                        BGZF* gcov_fh = nullptr,
+                        hts_idx_t* cidx = nullptr,
+                        int* chrms_in_cidx = nullptr,
+                        FILE* wcov_fh=nullptr,
+                        BGZF* gwcov_fh=nullptr,
+                        int window_size=0,
+                        Op op = csum) {
     bool first = true;
     bool first_print = true;
     uint32_t running_value = 0;
@@ -652,23 +660,49 @@ static uint64_t print_array(const char* prefix,
         cfh = gcov_fh; 
       }
     }
-    //TODO: speed this up, maybe keep a separate vector
-    //which tracks where the runs of the same value stop
-    //then only loop through that one w/o the if's
-    //
-    //OR
-    //
-    //create modules (functions/classes) which determine
-    //the type of output ahead of time to get rid of the if's
-    //
-    //this will print the coordinates in base-0
+
+    //might only want to print windowed coverage
+    //bool print_coverage = bwfp || gcov_fh || cov_fh;
+    bool print_windowed_coverage = window_size > 0 && (gwcov_fh || wcov_fh);
+    void* wcfh = nullptr;
+    if(print_windowed_coverage) {
+      wcfh = wcov_fh; 
+      //this assumes we're never going to have coverage and windowed coverage be different in terms of --gzip
+      if(!wcov_fh) {
+        printPtr = &my_gzwrite;
+        cfh = gwcov_fh; 
+      }
+    }
+
+
     uint32_t buf_len = 0;
     int bytes_written = 0;
     char* startp = new char[32];
     char* endp = new char[32];
     char* valuep = new char[32];
     float running_value_ = 0.0;
+    uint32_t wcounter = 0;
+    uint64_t wsum = 0;
+    char* window_output_line = new char[1024];
+    int window_bytes_written = -1;
+    uint32_t window_start = 0;
     for(uint32_t i = 0; i < arr_sz; i++) {
+        if(print_windowed_coverage) {
+            if(wcounter == window_size) {
+                if(op == csum)
+                    window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%lu\n", chrm, window_start, i, wsum); 
+                else if(op == cmean) {
+                    double wmean = wsum / window_size;
+                    window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
+                }
+                (*printPtr)(wcfh, window_output_line, window_bytes_written);
+                wsum = 0;
+                wcounter = 0;
+                window_start = i;
+            }
+            wsum += arr[i];
+            wcounter++;
+        }
         if(first || running_value != arr[i]) {
             if(!first) {
                 if(running_value > 0 || !skip_zeros) {
@@ -732,6 +766,16 @@ static uint64_t print_array(const char* prefix,
     }
     char last_line[1024];
     if(!first) {
+        if(print_windowed_coverage) {
+            if(op == csum)
+                window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%lu\n", chrm, window_start, arr_sz, wsum); 
+            else if(op == cmean) {
+                window_size = arr_sz - window_start;
+                double wmean = wsum / window_size;
+                window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
+            }
+            (*printPtr)(wcfh, window_output_line, window_bytes_written);
+        }
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
             if(not dont_output_coverage) {
@@ -1072,7 +1116,6 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
     return err;
 }
 
-enum Op { csum, cmean, cmin, cmax };
 typedef hashmap<std::string, int> str2op;
 template <typename T>
 static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& annotations, const long chr_size, const char* chrm, FILE* ofp, uint64_t* annotated_auc, Op op, bool just_auc = false, int keep_order_idx = -1) {
@@ -1800,7 +1843,7 @@ int finalize_tabix_index(const char* fname, const char* ifname, BGZF* bfh, hts_i
 
 
 template <typename T>
-int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
+int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations, uint32_t window_size = 0) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     uint64_t all_auc = 0;
     uint64_t unique_auc = 0;
@@ -1909,7 +1952,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(bigwig_opt)
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
         if(unique) {
-            if(annotation_opt) {
+            if(annotation_opt && window_size == 0) {
                 uafp = stdout;
                 if(gzip || has_option(argv, argv+argc, "--no-annotation-stdout")) {
                     char afn[1024];
@@ -2036,16 +2079,18 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
 
     //init to 0's
     int* chrms_in_cidx = new int[hdr->n_targets+1]{};
+
+
+    //TODO: also implement automatic detection of >=80% region coverage of genome
+    //AND automatically turn this on if we're doing windowed regions
     bool skip_index = has_option(argv, argv+argc, "--no-index");
     int num_annotations_for_index = num_annotations;
     if(skip_index)
        num_annotations_for_index = 0; 
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations_for_index, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
-    //while(sam_read1(bam_fh, hdr, rec) >= 0) {
     for(++bitr; bitr != end; ++bitr) {
         recs++;
-        //rec = *(*bitr);
         rec = *bitr;
         bam1_core_t *c = &rec->core;
         //read name
@@ -2085,10 +2130,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt || bigwig_opt || auc_opt) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, chrms_in_cidx, dont_output_coverage);
+                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                             if(unique) {
                                 sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, nullptr, dont_output_coverage);
+                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, dont_output_coverage);
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
@@ -2307,7 +2352,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, chrms_in_cidx, dont_output_coverage);
+                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                 if(coverage_opt) {
                     //now print out all contigs/chrms in header which had 0 coverage, only do this for the "all reads" coverage
                     char* last_interval_line = new char[1024];
@@ -2335,7 +2380,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 }
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, nullptr, dont_output_coverage);
+                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, dont_output_coverage);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -2474,6 +2519,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     if(has_option(argv, argv+argc, "--prefix"))
             prefix = *(get_option(argv, argv+argc, "--prefix"));
     BGZF* afpz = nullptr;
+    uint32_t window_size = 0;
     if(has_annotation) {
         sum_annotation = true;
         const char* afile = *(get_option(argv, argv+argc, "--annotation"));
@@ -2481,25 +2527,34 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             std::cerr << "No argument to --annotation" << std::endl;
             return -1;
         }
-        afp = fopen(afile, "r");
-        err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
-        fclose(afp);
-        
+        //TODO: parse afile for a window size (e.g. 200) if doing windowed regions
+        char* output_prefix = new char[100];
+        sprintf(output_prefix, "window");
+        window_size = strtol(afile, nullptr, 10);
+        if(window_size == 0) {
+            afp = fopen(afile, "r");
+            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
+            fclose(afp);
+            assert(!annotations.empty());
+            std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+            sprintf(output_prefix, "annotation");
+        }
+        else
+            fprintf(stderr, "computing coverage windows of length %u\n", window_size);
+
         afp = stdout;
         if(gzip || no_annotation_stdout) {
             char afn[1024];
             if(gzip) {
-                sprintf(afn, "%s.annotation.tsv.gz", prefix);
+                sprintf(afn, "%s.%s.tsv.gz", prefix, output_prefix);
                 afpz = bgzf_open(afn,"w10");
                 afp = nullptr;
             }
             else {
-                sprintf(afn, "%s.annotation.tsv", prefix);
+                sprintf(afn, "%s.%s.tsv", prefix, output_prefix);
                 afp = fopen(afn, "w");
             }
         }
-        assert(!annotations.empty());
-        std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
     }
     //if no args are passed in other than a file (BAM or BW)
     //then just compute the auc 
@@ -2518,7 +2573,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
 
     assert(err == 0);
     if(is_bam)
-        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
+        return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations, window_size = window_size);
     else
         return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
 }

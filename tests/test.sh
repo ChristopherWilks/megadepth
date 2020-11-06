@@ -5,10 +5,11 @@ static=$1
 
 if [[ -z $static ]]; then
     time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
-    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
+
+    time ./md_runner http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 else
     time ./md_runner tests/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
-    time ./md_runner tests/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
+    time ./md_runner tests/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 fi
 
 
@@ -22,6 +23,10 @@ diff tests/test.bam.mosdepth.bwtool.all_aucs test.bam.auc.tsv
 
 #test base coverage other than BigWigs
 diff tests/test.cram.coverage.tsv test.cram.coverage.tsv
+
+#test --annotation <window_bp_length>
+cut -f 1,4 test.cram.window.tsv | perl -ne 'chomp; ($c,$v)=split(/\t/,$_); $h{$c}+=$v; END { for $c (sort keys %h) { print "$c\t".$h{$c}."\n"; }}' > test.cram.window.summed.tsv
+diff tests/test.cram.window.summed.tsv test.cram.window.summed.tsv
 
 #check --op mean with BAMs
 ./md_runner tests/test.bam --annotation tests/test_exons.bed --op mean > test.bam.mean
@@ -87,5 +92,5 @@ time ./md_runner test.bam.all.bw --sums-only --annotation tests/testbw2.bed --pr
 diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 
 #clean up any previous test files
-rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean test.cram.coverage.tsv test_cram_run_out
+rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean test.cram.coverage.tsv test_cram_run_out test.cram.coverage.tsv.summed
 
