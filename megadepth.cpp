@@ -184,6 +184,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed>   Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end)\n"
     "  --op <sum[default], mean>     Statistic to run on the intervals provided by --annotation\n"
+    "  --no-index           If using --annotation, skip the use of the BAM index (BAI) for pulling out regions.\n"
+    "                       Setting this can be faster if doing windows across the whole genome.\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -704,13 +706,9 @@ static uint64_t print_array(const char* prefix,
                             bytes_written+=digits+1;
                             bufptr[0]='\0';
                             (*printPtr)(cfh, buf, bytes_written);
-                            //TODO add this for last line
+                            if(chrms_in_cidx && chrms_in_cidx[tid+1] == 0)
+                                chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
                             if(cidx) {
-                                //change this to an array lookup based on header
-                                if(chrms_in_cidx[tid+1] == 0) {
-                                    chrms_in_cidx[0]++;
-                                    chrms_in_cidx[tid+1] = chrms_in_cidx[0];
-                                }
                                 if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
                                     fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n",chrm,last_pos,i, tid, chrms_in_cidx[tid+1]-1);
                                     exit(-1);
@@ -748,15 +746,11 @@ static uint64_t print_array(const char* prefix,
                 else {
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
-                    if(cidx) {
-                        //change this to an array lookup based on header
-                        if(chrms_in_cidx[tid+1] == 0) {
-                            chrms_in_cidx[0]++;
-                            chrms_in_cidx[tid+1] = chrms_in_cidx[0];
-                        }
+                    if(chrms_in_cidx && chrms_in_cidx[tid+1] == 0)
+                        chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
+                    if(cidx)
                         if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, arr_sz, bgzf_tell((BGZF*) cfh), 1) < 0)
                             fprintf(stderr,"error writing last line of chromosome in index at coordinates: %s:%u-%ld, exiting\n",chrm,last_pos,arr_sz);
-                    }
                 }
             }
         }
@@ -2042,8 +2036,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
 
     //init to 0's
     int* chrms_in_cidx = new int[hdr->n_targets+1]{};
-
-    BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations, chrm_order);
+    bool skip_index = has_option(argv, argv+argc, "--no-index");
+    int num_annotations_for_index = num_annotations;
+    if(skip_index)
+       num_annotations_for_index = 0; 
+    BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations_for_index, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     //while(sam_read1(bam_fh, hdr, rec) >= 0) {
     for(++bitr; bitr != end; ++bitr) {
@@ -2311,6 +2308,31 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt) {
                 all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages, chr_size, false, bwfp, cov_fh, gcov_fh, cidx, chrms_in_cidx, dont_output_coverage);
+                if(coverage_opt) {
+                    //now print out all contigs/chrms in header which had 0 coverage, only do this for the "all reads" coverage
+                    char* last_interval_line = new char[1024];
+                    int line_len = 0;
+                    int ret = 0;
+                    for(int ci=0; ci < hdr->n_targets; ci++) {
+                        if(chrms_in_cidx[ci+1] == 0) {
+                            chrms_in_cidx[ci+1] = ++chrms_in_cidx[0];
+                            line_len = sprintf(last_interval_line, "%s\t0\t%u\t0\n", hdr->target_name[ci], hdr->target_len[ci]); 
+                            if(gcov_fh) {
+                                ret = bgzf_write(gcov_fh, last_interval_line, line_len);
+                                if(cidx) {
+                                    //fprintf(stderr,"writing empty chrm lines to index\n");
+                                    if(hts_idx_push(cidx, chrms_in_cidx[ci+1]-1, 0, hdr->target_len[ci], bgzf_tell(gcov_fh), 1) < 0) {
+                                        fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n", hdr->target_name[ci], 0, hdr->target_len[ci], ci, chrms_in_cidx[ci+1]-1);
+                                        exit(-1);
+                                    }
+                                }
+                            }
+                            else
+                                //fprintf(cov_fh, "%s", last_interval_line);
+                                ret = fwrite(last_interval_line, sizeof(char), line_len, cov_fh);
+                        }
+                    }
+                }
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
                     unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages, chr_size, false, ubwfp, cov_fh, nullptr, nullptr, nullptr, dont_output_coverage);
