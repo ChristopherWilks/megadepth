@@ -621,10 +621,8 @@ static uint64_t print_array(const char* prefix,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         FILE* cov_fh,
-                        //gzFile& gcov_fh,
                         BGZF* gcov_fh,
                         hts_idx_t* cidx,
-                        //str2int* chrms_in_cidx,
                         int* chrms_in_cidx,
                         const bool dont_output_coverage = false) {
     bool first = true;
@@ -712,13 +710,8 @@ static uint64_t print_array(const char* prefix,
                                 if(chrms_in_cidx[tid+1] == 0) {
                                     chrms_in_cidx[0]++;
                                     chrms_in_cidx[tid+1] = chrms_in_cidx[0];
-                                    fprintf(stderr,"add new chrm to index: %s tid: %d idx tid: %d\n", chrm, tid, chrms_in_cidx[tid+1]-1);
                                 }
-                                //int ctid = chrms_in_cidx.size()-1;
-                                if(chrms_in_cidx[tid+1]-1 == 30)
-                                    fprintf(stderr,"interval with tid 30: %s:%u-%u tid: %d\n",chrm,last_pos,i,tid);
                                 if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
-                                //if(hts_idx_push(cidx, tid, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
                                     fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n",chrm,last_pos,i, tid, chrms_in_cidx[tid+1]-1);
                                     exit(-1);
                                 }
@@ -756,7 +749,12 @@ static uint64_t print_array(const char* prefix,
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
                     if(cidx) {
-                        if(hts_idx_push(cidx, tid, last_pos, arr_sz, bgzf_tell((BGZF*) cfh), 1) < 0)
+                        //change this to an array lookup based on header
+                        if(chrms_in_cidx[tid+1] == 0) {
+                            chrms_in_cidx[0]++;
+                            chrms_in_cidx[tid+1] = chrms_in_cidx[0];
+                        }
+                        if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, arr_sz, bgzf_tell((BGZF*) cfh), 1) < 0)
                             fprintf(stderr,"error writing last line of chromosome in index at coordinates: %s:%u-%ld, exiting\n",chrm,last_pos,arr_sz);
                     }
                 }
@@ -1772,13 +1770,14 @@ int finalize_tabix_index(const char* fname, const char* ifname, BGZF* bfh, hts_i
     memcpy(x, &tbx->conf, 24);
     char** name = new char*[num_chrms];
     int k = 0;
-    for(i=1; i < num_chrms+1; i++) {
+    for(i=1; i < hdr->n_targets+1; i++) {
         if(chrms_in_cidx[i] > 0) {
             all_cnames_len += strlen(hdr->target_name[i-1]) + 1; //+1 for '\0'
             //now copy chrm name into names
             name[k++] = hdr->target_name[i-1];
         }
     }
+    assert(k==num_chrms);
     i = 0;
     
     l_nm = x[6] = all_cnames_len;
@@ -1940,8 +1939,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             char cov_fn[1024];
             if(gzip) {
                 sprintf(cov_fn, "%s.coverage.tsv.gz", prefix);
-                //gzFile gcov_fh_ = gzopen(cov_fn,"w");
-                //gcov_fh = gzopen(cov_fn,"w1");
                 gcov_fh = bgzf_open(cov_fn,"w10");
                 cov_fh = nullptr;
                 //from https://github.com/samtools/htslib/blob/c9175183c42382f1030503e88ca7e60cb9c08536/sam.c#L923
@@ -1949,7 +1946,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 int min_shift = 14;
                 int n_lvls = (TBX_MAX_SHIFT - min_shift + 2) / 3;
                 int fmt = HTS_FMT_CSI;
-                //n_lvls = adjust_n_lvls(min_shift, n_lvls, chr_size);
                 cidx = hts_idx_init(0, fmt, 0, min_shift, n_lvls);
             }
             else {
@@ -2044,8 +2040,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         num_annotations_ = num_annotations;
     int num_cigar_ops = process_cigar_callbacks.size();
 
-    //str2int chrms_in_cidx;
-    //first slot is the number of actually present chromosomes in the index
     //init to 0's
     int* chrms_in_cidx = new int[hdr->n_targets+1]{};
 
@@ -2378,7 +2372,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         bwCleanup();
     }
     //for writing out an index for BGZipped coverage BED files
-    //based on Tabix source: https://github.com/samtools/htslib/blob/develop/tabix.c
     char temp_afn[1024];
     int min_shift = 14;
     tbx_conf_t tconf = tbx_conf_bed;
@@ -2386,9 +2379,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fclose(cov_fh);
     if(gzip && gcov_fh) {
         sprintf(temp_afn, "%s.coverage.tsv.gz", prefix);
-        //if(bgzf_index_dump(gcov_fh, temp_afn, ".gsi") < 0) {
-        //min_shift=14, tbx_conf_bed, towrite out .csi
-        //if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
         char temp_afni[1024];
         sprintf(temp_afni, "%s.coverage.tsv.gz.csi", prefix);
         int check = finalize_tabix_index(temp_afn, temp_afni, gcov_fh, cidx, chrms_in_cidx, hdr);
@@ -2479,7 +2469,6 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             if(gzip) {
                 sprintf(afn, "%s.annotation.tsv.gz", prefix);
                 afpz = bgzf_open(afn,"w10");
-                //bgzf_index_build_init(afpz);
                 afp = nullptr;
             }
             else {
