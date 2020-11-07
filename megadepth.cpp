@@ -2369,6 +2369,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     sprintf(val,"%d",0);
                     if(op == cmean)
                         sprintf(val,"%.2f",0.00);
+                    uint32_t wend = 0;
                     for(int ci=0; ci < hdr->n_targets; ci++) {
                         uint32_t chr_len = hdr->target_len[ci];
                         char* chr_name = hdr->target_name[ci];
@@ -2376,12 +2377,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                             chrms_in_cidx[ci+1] = ++chrms_in_cidx[0];
                             if(window_size > 0) {
                                 for(wi=0; wi < chr_len; wi+=window_size) {
-                                    line_len = sprintf(last_interval_line, "%s\t%u\t%u\t%s\n", chr_name, wi, wi+window_size, val); 
-                                    (*printPtr)(wcfh, last_interval_line, line_len);
-                                }
-                                int remain = chr_len % window_size;
-                                if(remain > 0) {
-                                    line_len = sprintf(last_interval_line, "%s\t%u\t%u\t%s\n", chr_name, wi, chr_len, val); 
+                                    wend = wi+window_size; 
+                                    if(wend > chr_len)
+                                        wend = chr_len;
+                                    line_len = sprintf(last_interval_line, "%s\t%u\t%u\t%s\n", chr_name, wi, wend, val); 
                                     (*printPtr)(wcfh, last_interval_line, line_len);
                                 }
                             }
