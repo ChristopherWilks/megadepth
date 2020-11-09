@@ -889,7 +889,7 @@ static void process_cigar(int n_cigar, const uint32_t *cigar, char** cigar_str, 
         char op_char[2];
         op_char[0] = (char) bam_cigar_opchr(cigar[k]);
         op_char[1] = '\0';
-        cx += sprintf((*cigar_str)+cx, "%d%s", len, op_char); 
+        cx += sprintf((*cigar_str)+cx, "%d%s", len, op_char);
         int i = 0;
         //now call each callback function
         for(auto const& func : *callbacks) {
@@ -1116,7 +1116,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //2) we're either not unique, or we're higher than the required quality
     int32_t mendpos = 0;
     int n_mspans = 0;
-    int32_t** mspans = nullptr;
+    std::unique_ptr<int32_t[]> mspans;
     int mspans_idx = 0;
     const std::string tn(qname);
     int32_t end_pos = bam_endpos(rec);
@@ -1151,15 +1151,14 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             uint32_t* mcigar = &(mate_info[3]);
             //bash cigar to get spans of overlap
             int32_t malgn_end_pos = real_mate_pos;
-            mspans = new int32_t*[mn_cigar];
+            mspans.reset(new int32_t[mn_cigar * 2]);
             for (k = 0; k < mn_cigar; ++k) {
                 const int cigar_op = bam_cigar_op(mcigar[k]);
                 if(bam_cigar_type(cigar_op)&2) {
                     const int32_t len = bam_cigar_oplen(mcigar[k]);
                     if(bam_cigar_type(cigar_op)&1) {
-                        mspans[mspans_idx] = new int32_t(2);
-                        mspans[mspans_idx][0] = malgn_end_pos;
-                        mspans[mspans_idx][1] = malgn_end_pos + len;
+                        mspans[mspans_idx * 2] = malgn_end_pos;
+                        mspans[mspans_idx * 2 + 1] = malgn_end_pos + len;
                         mspans_idx++;
                     }
                     malgn_end_pos += len;
@@ -1188,28 +1187,28 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     if(n_mspans > 0 && algn_end_pos < mendpos) {
                         //loop until we find the next overlapping span
                         //if are current segment is too early we just keep the span index where it is
-                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
+                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx * 2 + 1])
                             mspans_idx++;
                         int32_t cur_end = algn_end_pos + len;
                         int32_t left_end = algn_end_pos;
-                        if(left_end < mspans[mspans_idx][0])
-                            left_end = mspans[mspans_idx][0];
+                        if(left_end < mspans[mspans_idx * 2])
+                            left_end = mspans[mspans_idx * 2];
                         //check 1) we've still got mate spans 2) current segment overlaps the current mate span
-                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
-                                                    && cur_end > mspans[mspans_idx][0]) {
+                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx * 2 + 1]
+                                                    && cur_end > mspans[mspans_idx * 2]) {
                             //set right end of segment to decrement
                             int32_t right_end = cur_end;
                             int32_t next_left_end = left_end;
-                            if(right_end >= mspans[mspans_idx][1]) {
-                                right_end = mspans[mspans_idx][1];
+                            if(right_end >= mspans[mspans_idx * 2 + 1]) {
+                                right_end = mspans[mspans_idx * 2 + 1];
                                 //if our segment is greater than the previous mate's
                                 //also increment the mate spans index
                                 mspans_idx++;
                                 if(mspans_idx < n_mspans)
-                                    next_left_end = mspans[mspans_idx][0];
+                                    next_left_end = mspans[mspans_idx * 2];
                             }
                             else {
-                                next_left_end = mspans[mspans_idx][1];
+                                next_left_end = mspans[mspans_idx * 2 + 1];
                             }
                             decrement_coverages(coverages + left_end, right_end - left_end);
                             if(mate_passes_quality)
@@ -1236,29 +1235,29 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     if(n_mspans > 0 && algn_end_pos < mendpos) {
                         //loop until we find the next overlapping span
                         //if are current segment is too early we just keep the span index where it is
-                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx][1])
+                        while(mspans_idx < n_mspans && algn_end_pos >= mspans[mspans_idx * 2 + 1])
                             mspans_idx++;
                         int32_t cur_end = algn_end_pos + len;
                         int32_t left_end = algn_end_pos;
-                        if(left_end < mspans[mspans_idx][0])
-                            left_end = mspans[mspans_idx][0];
+                        if(left_end < mspans[mspans_idx * 2])
+                            left_end = mspans[mspans_idx * 2];
                         //check 1) we've still got mate spans 2) current segment overlaps the current mate span
-                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx][1] 
-                                                    && cur_end > mspans[mspans_idx][0]) {
+                        while(mspans_idx < n_mspans && left_end < mspans[mspans_idx * 2 + 1]
+                                                    && cur_end > mspans[mspans_idx * 2]) {
                             //set right end of segment to decrement
                             int32_t right_end = cur_end;
                             int32_t next_left_end = left_end;
-                            if(right_end >= mspans[mspans_idx][1]) {
-                                right_end = mspans[mspans_idx][1];
+                            if(right_end >= mspans[mspans_idx * 2 + 1]) {
+                                right_end = mspans[mspans_idx * 2 + 1];
                                 //if our segment is greater than the previous mate's
                                 //also increment the mate spans index
                                 //delete[] mspans[mspans_idx];
                                 mspans_idx++;
                                 if(mspans_idx < n_mspans)
-                                    next_left_end = mspans[mspans_idx][0];
+                                    next_left_end = mspans[mspans_idx * 2];
                             }
                             else {
-                                next_left_end = mspans[mspans_idx][1];
+                                next_left_end = mspans[mspans_idx * 2 + 1];
                             }
                             decrement_coverages(&coverages[left_end], right_end - left_end);
                             left_end = next_left_end;
@@ -1268,11 +1267,6 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 algn_end_pos += len;
             }
         }
-    }
-    if(mspans) {
-        for(k = 0; k < n_mspans; k++)
-            delete[] mspans[k];
-        delete[] mspans;
     }
     return algn_end_pos;
 }
