@@ -682,7 +682,8 @@ static uint64_t print_array(const char* prefix,
     float running_value_ = 0.0;
     uint32_t wcounter = 0;
     uint64_t wsum = 0;
-    char* window_output_line = new char[1024];
+    char* wbuf = new char[1024];
+    char* wbufptr = wbuf;
     int window_bytes_written = -1;
     uint32_t window_start = 0;
     //make sure we track this chromosome in whatever index we're building
@@ -693,16 +694,46 @@ static uint64_t print_array(const char* prefix,
     for(uint32_t i = 0; i < arr_sz; i++) {
         if(print_windowed_coverage) {
             if(wcounter == window_size) {
-                if(op == csum)
-                    window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%lu\n", chrm, window_start, i, wsum); 
+                memcpy(wbufptr, chrm, chrnamelen);
+                wbufptr += chrnamelen;
+                //start bytes_written from here
+                window_bytes_written = chrnamelen;
+
+                *wbufptr='\t';
+                wbufptr+=1;
+                window_bytes_written++;
+                //idea from https://github.com/brentp/mosdepth/releases/tag/v0.2.9
+                uint32_t digits = u32toa_countlut(window_start, wbufptr, '\t');
+                wbufptr+=digits+1;
+                window_bytes_written+=digits+1;
+                            
+                digits = u32toa_countlut(i, wbufptr, '\t');
+                wbufptr+=digits+1;
+                window_bytes_written+=digits+1;
+                
+                if(op == csum) {
+                    digits = u32toa_countlut(wsum, wbufptr, '\n');
+                    wbufptr+=digits+1;
+                    window_bytes_written+=digits+1;
+                    wbufptr[0]='\0';
+                }
                 else if(op == cmean) {
                     double wmean = (double)wsum / (double)window_size;
-                    window_bytes_written = sprintf(window_output_line, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
+                    window_bytes_written += sprintf(wbufptr, "%.2f\n", wmean);
                 }
-                (*printPtr)(wcfh, window_output_line, window_bytes_written);
+
+                /*if(op == csum)
+                    window_bytes_written = sprintf(wbufptr, "%s\t%u\t%u\t%lu\n", chrm, window_start, i, wsum); 
+                else if(op == cmean) {
+                    double wmean = (double)wsum / (double)window_size;
+                    window_bytes_written = sprintf(wbufptr, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
+                }*/
+
+                (*printPtr)(wcfh, wbuf, window_bytes_written);
                 wsum = 0;
                 wcounter = 0;
                 window_start = i;
+                wbufptr = wbuf;
             }
             wsum += arr[i];
             wcounter++;
@@ -770,13 +801,13 @@ static uint64_t print_array(const char* prefix,
     if(!first) {
         if(print_windowed_coverage) {
             if(op == csum)
-                window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%lu\n", chrm, window_start, arr_sz, wsum); 
+                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%lu\n", chrm, window_start, arr_sz, wsum); 
             else if(op == cmean) {
                 window_size = arr_sz - window_start;
                 double wmean = (double)wsum / (double)window_size;
-                window_bytes_written = sprintf(window_output_line, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
+                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
             }
-            (*printPtr)(wcfh, window_output_line, window_bytes_written);
+            (*printPtr)(wcfh, wbuf, window_bytes_written);
         }
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
@@ -2389,7 +2420,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                 if(gcov_fh) {
                                     ret = bgzf_write(gcov_fh, last_interval_line, line_len);
                                     if(cidx) {
-                                        //fprintf(stderr,"writing empty chrm lines to index\n");
                                         if(hts_idx_push(cidx, chrms_in_cidx[ci+1]-1, 0, hdr->target_len[ci], bgzf_tell(gcov_fh), 1) < 0) {
                                             fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n", hdr->target_name[ci], 0, hdr->target_len[ci], ci, chrms_in_cidx[ci+1]-1);
                                             exit(-1);
@@ -2397,7 +2427,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                     }
                                 }
                                 else
-                                    //fprintf(cov_fh, "%s", last_interval_line);
                                     ret = fwrite(last_interval_line, sizeof(char), line_len, cov_fh);
                             }
                         }
