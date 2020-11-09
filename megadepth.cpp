@@ -94,7 +94,6 @@ uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 bool SUMS_ONLY = false;
 
 typedef std::vector<std::string> strvec;
-//typedef hashmap<std::string, uint64_t> mate2len;
 typedef hashmap<std::string, uint64_t> mate2len;
 typedef hashmap<std::string, double*> str2dblist;
 
@@ -119,7 +118,6 @@ static const int COORD_STR_LEN=34;
 enum Op { csum, cmean, cmin, cmax };
 
 static const void print_version() {
-    //fprintf(stderr, "megadepth %s\n", string(MEGADEPTH_VERSION).c_str());
     std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
 }
 
@@ -319,7 +317,6 @@ struct MdzOp {
 };
 
 //from https://github.com/samtools/htslib/blob/7c04ea5c328547e9e8a9af4b932b87a3cb1939e6/hts.c#L82
-//const char seq_nt16_str[] = "=ACMGRSVTWYHKDBN";
 int A_idx = 1;
 int T_idx = 8;
 static inline int polya_check(const uint8_t *str, size_t off, size_t run, char *c) {
@@ -338,7 +335,6 @@ static inline int polya_check(const uint8_t *str, size_t off, size_t run, char *
     return count;
 }
 
-//const char seq_nt16_str[] = "=ACMGRSVTWYHKDBN";
 static const char seq_rev_nt16_str[] = "=TGMCRSVAWYHKDBN";
 static inline std::ostream& seq_substring(std::ostream& os, const uint8_t *str, size_t off, size_t run, bool reverse=false) {
     if(reverse) {
@@ -691,7 +687,6 @@ static uint64_t print_array(const char* prefix,
     int chrnamelen = strlen(chrm);
     int total_line_len = chrnamelen + COORD_STR_LEN;
     int num_lines_per_buf = round(OUT_BUFF_SZ / total_line_len) - 3;
-    //fprintf(stdout, "num_lines_per_buf %d\n", num_lines_per_buf);
     int buf_written = 0;
     char* buf = nullptr;
     char* bufptr = nullptr;
@@ -709,7 +704,6 @@ static uint64_t print_array(const char* prefix,
     }
 
     //might only want to print windowed coverage
-    //bool print_coverage = bwfp || gcov_fh || cov_fh;
     bool print_windowed_coverage = window_size > 0 && (gwcov_fh || wcov_fh);
     void* wcfh = nullptr;
     if(print_windowed_coverage) {
@@ -807,7 +801,6 @@ static uint64_t print_array(const char* prefix,
                 wcounter = 0;
                 window_start = i;
             }
-            //wsum += arr[i];
             wsum += running_value;
             wcounter++;
         }
@@ -1280,8 +1273,6 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     return algn_end_pos;
 }
 
-//typedef hashmap<std::string, std::vector<long*>*> annotation_map_t;
-//typedef hashmap<std::string, std::vector<void*>*> annotation_map_t;
 template <typename T>
 using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
@@ -1328,7 +1319,6 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
-    //std::fprintf(stderr, "read %zd bytes. line: '%s'\n", bytes_read, line);
     int err = 0;
     while(bytes_read != -1) {
         err = process_region_line(line, "\t", amap, chrm_order, keep_order);
@@ -1381,7 +1371,6 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& an
 
 
 static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn, const char *suffix) {
-    //if(bwInit(1<<BIGWIG_INIT_VAL) != 0) {
     if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(stderr, "Failed when calling bwInit with %d init val\n", BIGWIG_INIT_VAL);
         exit(-1);
@@ -1470,7 +1459,6 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
     {
         if(fp->cl->len[tid] < 1)
             continue;
-        //fprintf(stdout,"processing chromosome %s len:%d \n", fp->cl->chrom[tid], fp->cl->len[tid] );
         iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
 
         if(!iter->data)
@@ -1662,7 +1650,6 @@ template <typename T>
 static void output_missing_annotations(const annotation_map_t<T>* annotations, const chr2bool* annotations_seen, FILE* ofp, Op op = csum) {
     //check if we're doing means output doubles, otherwise output longs
     T val = 0;
-    //void (*printPtr) (FILE*, const char*, long, long, T, double*, long) = &print_shared;
     int (*printPtr) (char* buf, const char*, long, long, T, double*, long) = &print_shared;
     int (*outputFunc)(void* fh, char* buf, uint32_t buf_len) = &my_write;
     if(SUMS_ONLY)
@@ -2387,9 +2374,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                 annotation_chrs_seen->insert(hdr->target_name[ptid]);
                         }
                     }
-                    reset_array(coverages.get(), chr_size);
+                    //need to reset the array for the *current* chromosome's size, not the past one
+                    reset_array(coverages.get(), hdr->target_len[tid]);
                     if(unique)
-                        reset_array(unique_coverages.get(), chr_size);
+                        reset_array(unique_coverages.get(), hdr->target_len[tid]);
                 }
                 end_refpos = calculate_coverage(rec, coverages.get(), unique_coverages.get(), double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len, no_region);
             }
@@ -2445,8 +2433,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                 fprintf(refp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, ends[j]);
                         }
                     }
-                    reset_array(starts.get(), chr_size);
-                    reset_array(ends.get(), chr_size);
+                    reset_array(starts.get(), hdr->target_len[tid]);
+                    reset_array(ends.get(), hdr->target_len[tid]);
                 }
                 if(bw_unique_min_qual == 0 || rec->core.qual >= bw_unique_min_qual) {
                     starts[refpos]++;
@@ -2667,9 +2655,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, uafp, uafpz);
         }
         if(sum_annotation && auc_file) {
-            fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%ld\n", annotated_auc);
+            fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
             if(unique)
-                fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%ld\n", unique_annotated_auc);
+                fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%" PRIu64 "\n", unique_annotated_auc);
         }
         if(sum_annotation && !keep_order) {
             output_missing_annotations(annotations, annotation_chrs_seen, afp);
@@ -2677,9 +2665,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 output_missing_annotations(annotations, annotation_chrs_seen, uafp);
         }
         if(auc_file) {
-            fprintf(auc_file, "ALL_READS_ALL_BASES\t%ld\n", all_auc);
+            fprintf(auc_file, "ALL_READS_ALL_BASES\t%" PRIu64 "\n", all_auc);
             if(unique)
-                fprintf(auc_file, "UNIQUE_READS_ALL_BASES\t%ld\n", unique_auc);
+                fprintf(auc_file, "UNIQUE_READS_ALL_BASES\t%" PRIu64 "\n", unique_auc);
         }
     }
     if(compute_ends) {
