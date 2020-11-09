@@ -663,16 +663,17 @@ static void reset_array(uint32_t* arr, const long arr_sz) {
 #endif
 }
 
-typedef hashmap<uint32_t,uint32_t> int2int;
+template <typename T2>
 static uint64_t print_array(const char* prefix,
                         char* chrm,
                         int32_t tid,
-                        const uint32_t* arr, 
+                        const T2* arr,
                         const long arr_sz,
                         const bool skip_zeros,
                         bigWigFile_t* bwfp,
                         FILE* cov_fh,
                         const bool dont_output_coverage = false,
+                        bool no_region=true,
                         BGZF* gcov_fh = nullptr,
                         hts_idx_t* cidx = nullptr,
                         int* chrms_in_cidx = nullptr,
@@ -680,6 +681,7 @@ static uint64_t print_array(const char* prefix,
                         BGZF* gwcov_fh=nullptr,
                         int window_size=0,
                         Op op = csum) {
+
     bool first = true;
     bool first_print = true;
     uint32_t running_value = 0;
@@ -727,9 +729,8 @@ static uint64_t print_array(const char* prefix,
     char* valuep = new char[32];
     float running_value_ = 0.0;
     uint32_t wcounter = 0;
-    uint64_t wsum = 0;
+    int64_t wsum = 0;
     char* wbuf = new char[1024];
-    char* wbufptr = wbuf;
     int window_bytes_written = -1;
     uint32_t window_start = 0;
     //make sure we track this chromosome in whatever index we're building
@@ -738,53 +739,7 @@ static uint64_t print_array(const char* prefix,
         chrms_in_cidx[tid+1] = ++chrms_in_cidx[0];
 
     for(uint32_t i = 0; i < arr_sz; i++) {
-        if(print_windowed_coverage) {
-            if(wcounter == window_size) {
-                memcpy(wbufptr, chrm, chrnamelen);
-                wbufptr += chrnamelen;
-                //start bytes_written from here
-                window_bytes_written = chrnamelen;
-
-                *wbufptr='\t';
-                wbufptr+=1;
-                window_bytes_written++;
-                //idea from https://github.com/brentp/mosdepth/releases/tag/v0.2.9
-                uint32_t digits = u32toa_countlut(window_start, wbufptr, '\t');
-                wbufptr+=digits+1;
-                window_bytes_written+=digits+1;
-                            
-                digits = u32toa_countlut(i, wbufptr, '\t');
-                wbufptr+=digits+1;
-                window_bytes_written+=digits+1;
-                
-                if(op == csum) {
-                    digits = u32toa_countlut(wsum, wbufptr, '\n');
-                    wbufptr+=digits+1;
-                    window_bytes_written+=digits+1;
-                    wbufptr[0]='\0';
-                }
-                else if(op == cmean) {
-                    double wmean = (double)wsum / (double)window_size;
-                    window_bytes_written += sprintf(wbufptr, "%.2f\n", wmean);
-                }
-
-                /*if(op == csum)
-                    window_bytes_written = sprintf(wbufptr, "%s\t%u\t%u\t%lu\n", chrm, window_start, i, wsum); 
-                else if(op == cmean) {
-                    double wmean = (double)wsum / (double)window_size;
-                    window_bytes_written = sprintf(wbufptr, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
-                }*/
-
-                (*printPtr)(wcfh, wbuf, window_bytes_written);
-                wsum = 0;
-                wcounter = 0;
-                window_start = i;
-                wbufptr = wbuf;
-            }
-            wsum += arr[i];
-            wcounter++;
-        }
-        if(first || running_value != arr[i]) {
+        if(first || (!no_region && running_value != arr[i]) || (no_region && arr[i] != 0)) {
             if(!first) {
                 if(running_value > 0 || !skip_zeros) {
                     //based on wiggletools' AUC calculation
@@ -832,22 +787,33 @@ static uint64_t print_array(const char* prefix,
                 }
             }
             first = false;
-            running_value = arr[i];
+            if(no_region)
+                running_value += arr[i];
+            else
+                running_value = arr[i];
             last_pos = i;
+        }
+        if(print_windowed_coverage) {
+            if(wcounter == window_size) {
+                if(op == csum)
+                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%ld\n", chrm, window_start, i, wsum); 
+                else if(op == cmean) {
+                    double wmean = (double)wsum / (double)window_size;
+                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
+                }
+
+                (*printPtr)(wcfh, wbuf, window_bytes_written);
+                wsum = 0;
+                wcounter = 0;
+                window_start = i;
+            }
+            //wsum += arr[i];
+            wsum += running_value;
+            wcounter++;
         }
     }
     char last_line[1024];
     if(!first) {
-        if(print_windowed_coverage) {
-            if(op == csum)
-                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%lu\n", chrm, window_start, arr_sz, wsum); 
-            else if(op == cmean) {
-                window_size = arr_sz - window_start;
-                double wmean = (double)wsum / (double)window_size;
-                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
-            }
-            (*printPtr)(wcfh, wbuf, window_bytes_written);
-        }
         if(running_value > 0 || !skip_zeros) {
             auc += (arr_sz - last_pos) * ((long) running_value);
             if(not dont_output_coverage) {
@@ -859,10 +825,8 @@ static uint64_t print_array(const char* prefix,
                         bwAppendIntervals(bwfp, &last_pos, (uint32_t*) &arr_sz, &running_value_, 1);
                     }
                 } else {
-                    if(buf_written > 0) {
-                        //bufptr[0]='\0';
+                    if(buf_written > 0) 
                         (*printPtr)(cfh, buf, buf_len);
-                    }
                     // This printing step could also be u32toa_countlut-ified
                     buf_len = sprintf(last_line, "%s\t%u\t%lu\t%u\n", chrm, last_pos, arr_sz, running_value);
                     (*printPtr)(cfh, last_line, buf_len);
@@ -871,6 +835,16 @@ static uint64_t print_array(const char* prefix,
                             fprintf(stderr,"error writing last line of chromosome in index at coordinates: %s:%u-%ld, exiting\n",chrm,last_pos,arr_sz);
                 }
             }
+        }
+        if(print_windowed_coverage) {
+            if(op == csum)
+                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%ld\n", chrm, window_start, arr_sz, wsum); 
+            else if(op == cmean) {
+                window_size = arr_sz - window_start;
+                double wmean = (double)wsum / (double)window_size;
+                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
+            }
+            (*printPtr)(wcfh, wbuf, window_bytes_written);
         }
     }
     return auc;
@@ -936,9 +910,22 @@ static void extract_junction(const int op, const int len, args_list* out) {
 
 
 
-static inline void decrement_coverages(uint32_t *coverages, uint32_t *unique_coverages, int start, int ninc) {
+static inline void decrement_coverages(uint32_t *coverages, uint32_t *unique_coverages, int start, int ninc, bool no_region=true) {
     coverages += start;
     unique_coverages += start;
+    
+    if(no_region) {
+        int32_t* coverages_ = (int32_t*) coverages;
+        int32_t* unique_coverages_ = (int32_t*) unique_coverages;
+
+        coverages_[0]--;
+        coverages_[ninc]++;
+
+        unique_coverages_[0]--;
+        unique_coverages_[ninc]++;
+        return;
+    }
+
 #if __AVX512F__
     const size_t nper = sizeof(__m512) / sizeof(int32_t);
     size_t nsimd = ninc / nper;
@@ -981,7 +968,13 @@ static inline void decrement_coverages(uint32_t *coverages, uint32_t *unique_cov
     }
 }
 
-static inline void decrement_coverages(uint32_t *coverages, int ninc) {
+static inline void decrement_coverages(uint32_t *coverages, int ninc, bool no_region=true) {
+    if(no_region) {
+        int32_t* coverages_ = (int32_t*) coverages;
+        coverages_[0]--;
+        coverages_[ninc]++;
+        return;
+    }
 #if __AVX512F__
     const size_t nper = sizeof(__m512) / sizeof(int32_t);
     size_t nsimd = ninc / nper;
@@ -1019,7 +1012,13 @@ static inline void decrement_coverages(uint32_t *coverages, int ninc) {
     for(; i < ninc; --coverages[i++]);
 }
 
-static inline void increment_coverages(uint32_t *coverages, int ninc) {
+static inline void increment_coverages(uint32_t *coverages, int ninc, bool no_region=true) {
+    if(no_region) {
+        int32_t* coverages_ = (int32_t*) coverages;
+        coverages_[0]++;
+        coverages_[ninc]--;
+        return;
+    }
 #if __AVX512F__
     const size_t nper = sizeof(__m512) / sizeof(int32_t);
     size_t nsimd = ninc / nper;
@@ -1054,9 +1053,19 @@ static inline void increment_coverages(uint32_t *coverages, int ninc) {
     for(; i < ninc; ++coverages[i++]);
 }
 
-static inline void increment_coverages(uint32_t *coverages, uint32_t *unique_coverages, int start, int ninc) {
+static inline void increment_coverages(uint32_t *coverages, uint32_t *unique_coverages, int start, int ninc, bool no_region=true) {
     coverages += start;
     unique_coverages += start;
+    if(no_region) {
+        int32_t* coverages_ = (int32_t*) coverages;
+        int32_t* unique_coverages_ = (int32_t*) unique_coverages;
+        coverages_[0]++;
+        coverages_[ninc]--;
+        
+        unique_coverages_[0]++;
+        unique_coverages_[ninc]--;
+        return;
+    }
 #if __AVX512F__
     const size_t nper = sizeof(__m512) / sizeof(int32_t);
     size_t nsimd = ninc / nper;
@@ -1100,7 +1109,7 @@ typedef hashmap<std::string, uint32_t*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                         uint32_t* unique_coverages, const bool double_count,
                                         const int min_qual, read2len* overlapping_mates,
-                                        int32_t* total_intron_length) {
+                                        int32_t* total_intron_length, bool no_region=true) {
     int32_t refpos = rec->core.pos;
     int32_t mrefpos = rec->core.mpos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
@@ -1182,7 +1191,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     (*total_intron_length) = (*total_intron_length) + len;
                 //are we calc coverages && do we consume query?
                 if(coverages && bam_cigar_type(cigar_op)&1) {
-                    increment_coverages(coverages, unique_coverages, algn_end_pos, len);
+                    increment_coverages(coverages, unique_coverages, algn_end_pos, len, no_region);
                     //now fixup overlapping segment but only if mate passed quality
                     if(n_mspans > 0 && algn_end_pos < mendpos) {
                         //loop until we find the next overlapping span
@@ -1210,9 +1219,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                             else {
                                 next_left_end = mspans[mspans_idx * 2 + 1];
                             }
-                            decrement_coverages(coverages + left_end, right_end - left_end);
+                            decrement_coverages(coverages + left_end, right_end - left_end, no_region);
                             if(mate_passes_quality)
-                                decrement_coverages(unique_coverages + left_end, right_end - left_end);
+                                decrement_coverages(unique_coverages + left_end, right_end - left_end, no_region);
                             left_end = next_left_end;
                         }
                     }
@@ -1230,7 +1239,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                     (*total_intron_length) = (*total_intron_length) + len;
                 //are we calc coverages && do we consume query?
                 if(coverages && bam_cigar_type(cigar_op)&1) {
-                    increment_coverages(&coverages[algn_end_pos], len);
+                    increment_coverages(&coverages[algn_end_pos], len, no_region);
                     //now fixup overlapping segment
                     if(n_mspans > 0 && algn_end_pos < mendpos) {
                         //loop until we find the next overlapping span
@@ -1259,7 +1268,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                             else {
                                 next_left_end = mspans[mspans_idx * 2 + 1];
                             }
-                            decrement_coverages(&coverages[left_end], right_end - left_end);
+                            decrement_coverages(&coverages[left_end], right_end - left_end, no_region);
                             left_end = next_left_end;
                         }
                     }
@@ -2299,13 +2308,15 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     //init to 0's
     int* chrms_in_cidx = new int[hdr->n_targets+1]{};
 
-
     //TODO: also implement automatic detection of >=80% region coverage of genome
     //AND automatically turn this on if we're doing windowed regions
     bool skip_index = has_option(argv, argv+argc, "--no-index");
     int num_annotations_for_index = num_annotations;
     if(skip_index)
        num_annotations_for_index = 0; 
+    bool no_region = true;
+    if(num_annotations > 0)
+        no_region = false;
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations_for_index, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     for(++bitr; bitr != end; ++bitr) {
@@ -2349,10 +2360,19 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         overlapping_mates.clear();
                         sprintf(cov_prefix, "cov\t%d", ptid);
                         if(coverage_opt || bigwig_opt || auc_opt || window_size > 0) {
-                            all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
-                            if(unique) {
-                                sprintf(cov_prefix, "ucov\t%d", ptid);
-                                unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage);
+                            if(no_region) {
+                                all_auc += print_array<int32_t>(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
+                                if(unique) {
+                                    sprintf(cov_prefix, "ucov\t%d", ptid);
+                                    unique_auc += print_array<int32_t>(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                                }
+                            }
+                            else {
+                                all_auc += print_array<uint32_t>(cov_prefix, hdr->target_name[ptid], ptid, coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
+                                if(unique) {
+                                    sprintf(cov_prefix, "ucov\t%d", ptid);
+                                    unique_auc += print_array<uint32_t>(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                                }
                             }
                         }
                         //if we also want to sum coverage across a user supplied file of annotated regions
@@ -2371,12 +2391,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(unique)
                         reset_array(unique_coverages.get(), chr_size);
                 }
-                end_refpos = calculate_coverage(rec, coverages.get(), unique_coverages.get(), double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len);
+                end_refpos = calculate_coverage(rec, coverages.get(), unique_coverages.get(), double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len, no_region);
             }
             //additional counting options which make use of knowing the end coordinate/maplen
             //however, if we're already running calculate_coverage, we don't need to redo this
             if(end_refpos == -1 && (report_end_coord || print_frag_dist))
-                end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len);
+                end_refpos = calculate_coverage(rec, nullptr, nullptr, double_count, bw_unique_min_qual, nullptr, &total_intron_len, no_region);
 
             if(report_end_coord)
                 fprintf(stdout, "%s\t%d\n", qname, end_refpos);
@@ -2571,7 +2591,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         if(ptid != -1) {
             sprintf(cov_prefix, "cov\t%d", ptid);
             if(coverage_opt || bigwig_opt || auc_opt || window_size > 0) {
-                all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
+                if(no_region)
+                    all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
+                else
+                    all_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                 if(coverage_opt || window_size > 0) {
                     //now print out all contigs/chrms in header which had 0 coverage, only do this for the "all reads" coverage
                     char* last_interval_line = new char[1024];
@@ -2622,7 +2645,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 }
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                    unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage);
+                    if(no_region)
+                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                    else
+                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -2641,9 +2667,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, uafp, uafpz);
         }
         if(sum_annotation && auc_file) {
-            fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%" PRIu64 "\n", annotated_auc);
+            fprintf(auc_file, "ALL_READS_ANNOTATED_BASES\t%ld\n", annotated_auc);
             if(unique)
-                fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%" PRIu64 "\n", unique_annotated_auc);
+                fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%ld\n", unique_annotated_auc);
         }
         if(sum_annotation && !keep_order) {
             output_missing_annotations(annotations, annotation_chrs_seen, afp);
@@ -2651,9 +2677,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 output_missing_annotations(annotations, annotation_chrs_seen, uafp);
         }
         if(auc_file) {
-            fprintf(auc_file, "ALL_READS_ALL_BASES\t%" PRIu64 "\n", all_auc);
+            fprintf(auc_file, "ALL_READS_ALL_BASES\t%ld\n", all_auc);
             if(unique)
-                fprintf(auc_file, "UNIQUE_READS_ALL_BASES\t%" PRIu64 "\n", unique_auc);
+                fprintf(auc_file, "UNIQUE_READS_ALL_BASES\t%ld\n", unique_auc);
         }
     }
     if(compute_ends) {
