@@ -2363,8 +2363,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     int* chrms_in_cidx = new int[hdr->n_targets+1]{};
 
     //TODO: also implement automatic detection of >=80% region coverage of genome
-    //AND automatically turn this on if we're doing windowed regions
-    bool skip_index = has_option(argv, argv+argc, "--no-index") || window_size > 0;
+    //AND automatically turn this on if we're doing windowed regions as windowed regions never use the index
+    bool skip_index = has_option(argv, argv+argc, "--no-index");
     int num_annotations_for_index = num_annotations;
     if(skip_index)
        num_annotations_for_index = 0; 
