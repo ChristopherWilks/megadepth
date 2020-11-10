@@ -185,11 +185,12 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --bigwig             Output coverage as BigWig file(s).  Writes to <prefix>.bw\n"
     "                       (also <prefix>.unique.bw when --min-unique-qual is specified).\n"
     "                       Requires libBigWig.\n"
-    "  --annotation <bed>   Path to BED file containing list of regions to sum coverage over\n"
-    "                       (tab-delimited: chrm,start,end)\n"
+    "  --annotation <BED|window_size>   Path to BED file containing list of regions to sum coverage over\n"
+    "                       (tab-delimited: chrm,start,end). Or this can specify a contiguous region size in bp.\n"
     "  --op <sum[default], mean>     Statistic to run on the intervals provided by --annotation\n"
     "  --no-index           If using --annotation, skip the use of the BAM index (BAI) for pulling out regions.\n"
     "                       Setting this can be faster if doing windows across the whole genome.\n"
+    "                       This will be turned on automatically if a window size is passed to --annotation.\n"
     "  --min-unique-qual <int>\n"
     "                       Output second bigWig consisting built only from alignments\n"
     "                       with at least this mapping quality.  --bigwig must be specified.\n"
@@ -259,22 +260,25 @@ int print_shared_sums_only<long>(char* buf,const char* c, long start, long end, 
 
 template <>
 int print_shared<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
-        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, val);
+        //from https://stackoverflow.com/questions/994764/rounding-doubles-5-sprintf
+        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, (round(val*100.)/100.));
+        //return sprintf(buf, "%s\t%lu\t%lu\t%.2f\t%.11f\t%lu\n", c, (long) start, (long) end, (round(val*100.)/100.), val, (end-start));
 }
+
 
 template <>
 int print_shared_sums_only<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
-        return sprintf(buf, "%.2f\n", val);
+        return sprintf(buf, "%.2f\n", (round(val*100.)/100.));
 }
 
 template <>
 int print_local<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
-        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, local_vals[z]);
+        return sprintf(buf, "%s\t%lu\t%lu\t%.2f\n", c, (long) start, (long) end, (round(local_vals[z]*100.)/100.));
 }
 
 template <>
 int print_local_sums_only<double>(char* buf, const char* c, long start, long end, double val, double* local_vals, long z) {
-        return sprintf(buf, "%.2f\n", local_vals[z]);
+        return sprintf(buf, "%.2f\n", (round(local_vals[z]*100.)/100.));
 }
 
 static const char* get_positional_n(const char ** begin, const char ** end, size_t n) {
@@ -793,7 +797,8 @@ static uint64_t print_array(const char* prefix,
                     window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%ld\n", chrm, window_start, i, wsum); 
                 else if(op == cmean) {
                     double wmean = (double)wsum / (double)window_size;
-                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
+                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, (round(wmean*100.)/100.)); 
+                    //window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\t%.11f\t%ld\n", chrm, window_start, i, (round(wmean*100.)/100.), wmean, wsum); 
                 }
 
                 (*printPtr)(wcfh, wbuf, window_bytes_written);
@@ -835,7 +840,8 @@ static uint64_t print_array(const char* prefix,
             else if(op == cmean) {
                 window_size = arr_sz - window_start;
                 double wmean = (double)wsum / (double)window_size;
-                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, wmean); 
+                window_bytes_written = sprintf(wbuf, "%s\t%u\t%lu\t%.2f\n", chrm, window_start, arr_sz, (round(wmean*100.)/100.)); 
+                //window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\t%.11f\t%ld\t%ld\n", chrm, window_start, arr_sz, (round(wmean*100.)/100.), wmean, wsum, window_size); 
             }
             (*printPtr)(wcfh, wbuf, window_bytes_written);
         }
@@ -2358,7 +2364,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
 
     //TODO: also implement automatic detection of >=80% region coverage of genome
     //AND automatically turn this on if we're doing windowed regions
-    bool skip_index = has_option(argv, argv+argc, "--no-index");
+    bool skip_index = has_option(argv, argv+argc, "--no-index") || window_size > 0;
     int num_annotations_for_index = num_annotations;
     if(skip_index)
        num_annotations_for_index = 0; 
