@@ -1098,13 +1098,29 @@ static inline void increment_coverages(uint32_t *coverages, uint32_t *unique_cov
     }
 }
 
-typedef hashmap<std::string, uint32_t*> read2len;
+static uint64_t num_overlapping_pairs = 0;
+//static uint32_t num_opairs[10024];
+
+struct MateInfo {
+    bool passing_qual;
+    std::string qname;
+    //char* qname;
+    int32_t mrefpos;
+    uint32_t n_cigar;
+    uint32_t* cigar;
+    bool erased;
+};
+
+//typedef hashmap<std::string, uint32_t*> read2len;
+//typedef hashmap<uint32_t, uint32_t*> read2len;
+typedef hashmap<uint32_t, std::vector<MateInfo*>*> read2len;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                         uint32_t* unique_coverages, const bool double_count,
                                         const int min_qual, read2len* overlapping_mates,
                                         int32_t* total_intron_length, bool no_region=true) {
     int32_t refpos = rec->core.pos;
     int32_t mrefpos = rec->core.mpos;
+    int32_t refpos_to_hash = mrefpos;
     //lifted from htslib's bam_cigar2rlen(...) & bam_endpos(...)
     int32_t algn_end_pos = refpos;
     const uint32_t* cigar = bam_get_cigar(rec);
@@ -1129,47 +1145,92 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     //and we overlap with our mate, then store our cigar + length
     //for the later mate to adjust its coverage appropriately
     if(coverages && !double_count && (rec->core.flag & BAM_FPROPER_PAIR) == 2) {
-        auto mit = overlapping_mates->find(tn);
+        bool possible_overlap = rec->core.tid == rec->core.mtid && end_pos > mrefpos;
+        bool first_mate_w_overlap = possible_overlap && refpos <= mrefpos;
+        bool second_mate = possible_overlap && refpos >= mrefpos;
+        if(second_mate)
+            refpos_to_hash = refpos;
+        //1) we're on the same chrm as our mate AND
+        //2) we're either the first mate overlapping with the 2nd, or we're the 2nd mate
+        //so we could have mate overlap
+        if(first_mate_w_overlap || second_mate) {
+            std::vector<MateInfo*>* mate_vec = nullptr;
+            MateInfo* mate_info = nullptr;
+            
+            auto mit = overlapping_mates->find(refpos_to_hash);
+            bool potential_mate_found = mit != overlapping_mates->end();
 
-        if(rec->core.tid == rec->core.mtid &&
-                end_pos > mrefpos &&
-                refpos <= mrefpos &&
-                mit == overlapping_mates->end()) {
-            const uint32_t* mcigar = bam_get_cigar(rec);
-            uint32_t n_cigar = rec->core.n_cigar;
-            uint32_t* mate_info = new uint32_t[n_cigar+3];
-            mate_info[0] = n_cigar;
-            mate_info[1] = refpos;
-            mate_info[2] = unique && passing_qual;
-            std::memcpy(mate_info+3, mcigar, 4*n_cigar);
-            (*overlapping_mates)[tn] = mate_info;
-        }
-        //-------Second Mate Check
-        else if(mit != overlapping_mates->end()) {
-            uint32_t* mate_info = (*overlapping_mates)[tn];
-            uint32_t mn_cigar = mate_info[0];
-            int32_t real_mate_pos = mate_info[1];
-            mate_passes_quality = mate_info[2];
-            uint32_t* mcigar = &(mate_info[3]);
-            //bash cigar to get spans of overlap
-            int32_t malgn_end_pos = real_mate_pos;
-            mspans.reset(new int32_t[mn_cigar * 2]);
-            for (k = 0; k < mn_cigar; ++k) {
-                const int cigar_op = bam_cigar_op(mcigar[k]);
-                if(bam_cigar_type(cigar_op)&2) {
-                    const int32_t len = bam_cigar_oplen(mcigar[k]);
-                    if(bam_cigar_type(cigar_op)&1) {
-                        mspans[mspans_idx * 2] = malgn_end_pos;
-                        mspans[mspans_idx * 2 + 1] = malgn_end_pos + len;
-                        mspans_idx++;
+            //if we found a potential mate in the hash based on pos
+            int mvi = 0;
+            if(potential_mate_found) {
+                mate_vec = mit->second;
+                for(auto mate : *mate_vec) {
+                    //fprintf(stderr,"name check for refpos %u mrefpos %u: %s vs. %s\n",refpos, mrefpos, tn.c_str(), mate->qname);
+                    if(!mate->erased && mate->qname == tn) {
+                        mate_info = mate;
+                        break;
                     }
-                    malgn_end_pos += len;
+                    mvi++;
                 }
             }
-            delete[] mate_info;
-            overlapping_mates->erase(mit);
-            n_mspans = mspans_idx;
-            mendpos = malgn_end_pos;
+
+            //first mate in the pair
+            if(first_mate_w_overlap && !mate_info) {
+                const uint32_t* mcigar = bam_get_cigar(rec);
+                uint32_t n_cigar = rec->core.n_cigar;
+                mate_info = new MateInfo;
+                mate_info->passing_qual = unique && passing_qual;
+                mate_info->qname = tn;
+                mate_info->mrefpos = refpos;
+                mate_info->n_cigar = n_cigar;
+                mate_info->cigar = new uint32_t[n_cigar];
+                std::memcpy(mate_info->cigar, mcigar, 4*n_cigar);
+                mate_info->erased = false;
+                //if we didn't find a previous vector, create one
+                if(!potential_mate_found) {
+                    mate_vec = new std::vector<MateInfo*>;
+                    overlapping_mates->emplace(mrefpos, mate_vec);
+                }
+                mate_vec->push_back(mate_info);
+                num_overlapping_pairs++;
+            }
+            //-------Second Mate Check
+            else if(second_mate && mate_info) {
+                uint32_t mn_cigar = mate_info->n_cigar;
+                mate_passes_quality = mate_info->passing_qual;
+                uint32_t* mcigar = mate_info->cigar;
+                int32_t real_mate_pos = mate_info->mrefpos;
+                int32_t malgn_end_pos = real_mate_pos;
+                //bash cigar to get spans of overlap
+                mspans.reset(new int32_t[mn_cigar * 2]);
+                for (k = 0; k < mn_cigar; ++k) {
+                    const int cigar_op = bam_cigar_op(mcigar[k]);
+                    if(bam_cigar_type(cigar_op)&2) {
+                        const int32_t len = bam_cigar_oplen(mcigar[k]);
+                        if(bam_cigar_type(cigar_op)&1) {
+                            mspans[mspans_idx * 2] = malgn_end_pos;
+                            mspans[mspans_idx * 2 + 1] = malgn_end_pos + len;
+                            mspans_idx++;
+                        }
+                        malgn_end_pos += len;
+                    }
+                }
+                delete[] mcigar;
+                mate_info->erased = true;
+                //overlapping_mates->erase(mit);
+                delete mate_info;
+                mate_vec->erase(mate_vec->begin()+mvi);
+                if(mate_vec->size() == 0) {
+                    //mate_vec->shrink_to_fit();
+                    //std::vector<MateInfo*>().swap(*mate_vec);
+                    //fprintf(stderr, "erasing vector\n");
+                    //delete mate_vec;
+                    delete mate_vec;
+                    overlapping_mates->erase(mit);
+                }
+                n_mspans = mspans_idx;
+                mendpos = malgn_end_pos;
+            }
         }
     }
     mspans_idx = 0;
@@ -2741,6 +2802,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         fprintf(softclip_file,"%" PRIu64 " total number of processed sequence bases\n",total_number_sequence_bases_processed);
         fclose(softclip_file);
     }
+    fprintf(stderr,"# of overlapping pairs: %" PRIu64 "\n", num_overlapping_pairs);
     return 0;
 }
 
