@@ -59,7 +59,7 @@ A BAM/CRAM index file is recommended for best performance on sparse regions when
 
 If a CRAM file is being processed, the reference FASTA may be retrieved from an external webserver (default) or specified with `--fasta /path/to/reference.fa`.
 
-Read alignments can be filtered in (inclusion) via `--filter-in <integer>` or filtered out (exclusion) via `--filter-out <integer>`, where `<integer>` is as bitmask according to the SAM specification in decimal. The defaults are `--filter-in 4294967295` and `--filter-out 260` to skip only unmapped and secondary alignments, processing everything else.
+Read alignments can be filtered in (inclusion) via `--filter-in <integer>` or filtered out (exclusion) via `--filter-out <integer>`, where `<integer>` is as bitmask according to the SAM specification in decimal. The defaults are `--filter-in 65535` and `--filter-out 260` to skip only unmapped and secondary alignments, processing everything else.
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 
