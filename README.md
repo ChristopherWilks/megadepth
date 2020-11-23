@@ -28,6 +28,11 @@ Finally, if none of those options work, the build instructions are at the end of
 
 For any remote file processing, either BAM or BigWigs, you *must* use the `--prefix <output_file_prefix>` option.
 
+`--op <op>` can be specified for:
+
+* BAMs, `<op>` can be `sum` or `mean`
+* BigWigs, `<op>` can be `sum`, `mean`, `min`, or `max`
+
 ## BigWig Processing
 ```
 megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> --op <operation_over_annotated_intervals>
@@ -70,7 +75,7 @@ These block gzipped files will also have a Tabix-like index `.csi` built for the
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
 
-Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.all.bw`.
+Subcommand `--bigwig` is the only subcommand that will output a BigWig file with the suffix `.coverage.bw`.
 If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will also be written to a separate BigWig file with the suffix `.unique.bw`.
 
 Also, `--bigwig` will not work on Windows, megadepth as of release 1.0.5 will simply skip writing a BigWig if this option is passed in with the Windows build, but will process other options which still make sense (e.g. `--auc`).
@@ -96,6 +101,7 @@ You can skip the index with `--no-index` in cases where the regions cover nearly
 generates coverage sums over a specified number of base pair length contiguous windows of the genome (e.g. 400 bp).
 
 All subcommands here will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
+
 
 ## Coverage over the whole genome
 
