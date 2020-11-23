@@ -91,11 +91,11 @@ This will be the same order as the BED file *if* coordinates from the same chrom
 
 You can skip the index with `--no-index` in cases where the regions cover nearly the whole genome (can be faster than jumping around the index).
 
-### `megadepth /path/to/bamfile --annotation 400`
+### `megadepth /path/to/bamfile --annotation <bp>`
 
-generates coverage sums over 400 bp contiguous windows of the genome. 
+generates coverage sums over a specified number of base pair length contiguous windows of the genome (e.g. 400 bp).
 
-Will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
+All subcommands here will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
 
 ## Coverage over the whole genome
 
