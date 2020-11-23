@@ -90,14 +90,17 @@ Will default to reporting to `STDOUT` unless `--no-auc-stdout` is passed in.
 
 ### `megadepth /path/to/bamfile --coverage`
 
-Generates per-base counts of overlapping reads across all of the genome.  
+Generates per-base counts of overlapping reads across all the whole genome.  
+
 Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
 
-### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout`
+### `megadepth /path/to/bamfile --annotation <annotated_file.bed>`
 
-In addition to reporting per-base coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
+Generates per-base counts across all regions in `<annotated_file.bed>` file.
+
+This will use the BAM index file (.bai) if it exists, otherwise it will do a linear walkthrough the BAM, but only reporting the coverage for the regions specified.
 
 The annotation BED file does not need to be sorted in any particular way.
 
@@ -105,11 +108,13 @@ megadepth will output the summed coverages for the annotation in contiguous bloc
 
 This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
 
-It's best to use the command as given, otherwise both the coverage and annotated coverage output will be reported intermingled to `STDOUT`.
-
 Will default to reporting to `STDOUT` unless `--no-annotation-stdout` is passed in.
 
-Also, this no longer automatically reports the AUC, you'll also need to pass in `--auc` if you want that as well.
+### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout`
+
+In addition to reporting per-base whole genome coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
+
+It's best to use the command as given, otherwise both the coverage and annotated coverage output will be reported intermingled to `STDOUT`.
  
 ### `megadepth /path/to/bamfile --coverage --double-count`
 
