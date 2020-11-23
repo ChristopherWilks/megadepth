@@ -77,30 +77,13 @@ If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will a
 
 Also, `--bigwig` will not work on Windows, megadepth as of release 1.0.5 will simply skip writing a BigWig if this option is passed in with the Windows build, but will process other options which still make sense (e.g. `--auc`).
 
-### `megadepth /path/to/bamfile --auc`
+### Coverage over regions
 
-Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
-This will also report additional counts for:
- * `min-unique-qual` only for reads with MAPQ >= to this setting
- * `--annotation`: only for bases in the annotated regions
- 
-This computes the coverage (same as `--coverage`) under the hood, but won't output it unless `--coverage` is also passed in.
+#### `megadepth /path/to/bamfile --annotation <annotated_file.bed>`
 
-Will default to reporting to `STDOUT` unless `--no-auc-stdout` is passed in.
+generates per-base counts across all regions in `<annotated_file.bed>` file.
 
-### `megadepth /path/to/bamfile --coverage`
-
-Generates per-base counts of overlapping reads across all the whole genome.  
-
-Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
-
-Will default to reporting to `STDOUT` unless `--no-coverage-stdout` is passed in.
-
-### `megadepth /path/to/bamfile --annotation <annotated_file.bed>`
-
-Generates per-base counts across all regions in `<annotated_file.bed>` file.
-
-This will use the BAM index file (.bai) if it exists, otherwise it will do a linear walkthrough the BAM, but only reporting the coverage for the regions specified.
+This will use the BAM index file (.bai) if it exists, otherwise it will do a linear walkthrough the BAM, but only reporting the coverage for the regions specified (typically much slower w/o an index).
 
 The annotation BED file does not need to be sorted in any particular way.
 
@@ -108,22 +91,43 @@ megadepth will output the summed coverages for the annotation in contiguous bloc
 
 This will be the same order as the BED file *if* coordinates from the same chromosome are contiguous in the BED file (typically they are).
 
-Will default to reporting to `STDOUT` unless `--no-annotation-stdout` is passed in.
+You can skip the index with `--no-index` in cases where the regions cover nearly the whole genome (can be faster than jumping around the index).
 
-### `megadepth /path/to/bamfile --coverage --annotation <annotated_file.bed> --no-coverage-stdout --no-annotation-stdout`
+#### `megadepth /path/to/bamfile --annotation 400`
 
-In addition to reporting per-base whole genome coverage, this will also sum the per-base coverage within annotated regions submitted as a BED file.
+generates coverage sums over 400 bp contiguous windows of the genome. 
 
-It's best to use the command as given, otherwise both the coverage and annotated coverage output will be reported intermingled to `STDOUT`.
+Will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
+
+### Coverage over the whole genome
+
+There's multiple ways to get whole genome, per-base coverage:
+
+#### `megadepth /path/to/bamfile --coverage`
+
+Generates per-base counts of overlapping reads across all bases of the genome.  
+
+Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
+
+Will default to reporting to `STDOUT` unless `--no-coverage-stdout` or `--gzip` is passed in.
+
+`megadepth /path/to/bamfile --bigwig`
+
+Outputs coverage as BigWig file(s) instead of TSVs (including for `--min-unique-qual` option) this is an alterate subcommand to `--coverage`.
+
+By default, `--coverage` and `--bigwig` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
+However, double counting can be allowed with the `--double-count` option, which may result in faster running times if precise counting is not needed.
+
+#### `megadepth /path/to/bamfile --auc`
+
+Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
+This will also report additional counts for:
+ * `min-unique-qual` only for reads with MAPQ >= to this setting
+ * `--annotation`: only for bases in the annotated regions
  
-### `megadepth /path/to/bamfile --coverage --double-count`
+This computes the coverage (same as `--coverage` and `--bigwig`) under the hood, but won't output it unless `--coverage` or `--bigwig` is also passed in.
 
-By default, `megadepth --coverage` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
-However, double counting can be allowed with this option, which may result in faster running times.
-
-### `megadepth /path/to/bamfile --bigwig`
-
-Outputs coverage vectors as BigWig file(s) (including for `--min-unique-qual` option).
+Will default to reporting to `STDOUT` unless `--no-auc-stdout` is passed in.
 
 ### `megadepth /path/to/bamfile --frag-dist`
 
