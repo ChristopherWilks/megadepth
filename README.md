@@ -32,10 +32,10 @@ Finally, if none of those options work, the build instructions are at the end of
 
 For any remote file processing, either BAM or BigWigs, you *must* use the `--prefix <output_file_prefix>` option.
 
-`--op <op>` can be specified for:
+Additionally, when using `--annotation`, `--op <op>` can be used to change the mode of summary:
 
-* BAMs, `<op>` can be `sum` or `mean`
-* BigWigs, `<op>` can be `sum`, `mean`, `min`, or `max`
+* BAMs, `<op>` can be `sum` (default) or `mean`
+* BigWigs, `<op>` can be `sum` (default), `mean`, `min`, or `max`
 
 ## BigWig Processing
 ```
@@ -105,7 +105,6 @@ You can skip the index with `--no-index` in cases where the regions cover nearly
 generates coverage sums over a specified number of base pair length contiguous windows of the genome (e.g. 400 bp).
 
 All subcommands here will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
-
 
 ## Coverage over the whole genome
 
