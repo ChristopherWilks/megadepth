@@ -1,5 +1,3 @@
-# megadepth
-
 [![Join the chat at https://gitter.im/megadepth/community](https://badges.gitter.im/megadepth/community.svg)](https://gitter.im/megadepth/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ![build](https://github.com/ChristopherWilks/megadepth/workflows/build/badge.svg)
@@ -26,11 +24,11 @@ Finally, if none of those options work, the build instructions are at the end of
 
 [Releases prior to 1.0.2 used the previous name "bamcount"]
 
-## Usage
+# Usage
 
 For any remote file processing, either BAM or BigWigs, you *must* use the `--prefix <output_file_prefix>` option.
 
-### BigWig Processing
+## BigWig Processing
 ```
 megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> --op <operation_over_annotated_intervals>
 ```
@@ -45,7 +43,7 @@ Or if you only want the AUC for the whole BigWig:
 megadepth SRR1258218.bw
 ```
 
-### BAM processing
+## BAM processing
 While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
 
 ```
@@ -67,7 +65,7 @@ Also, the optional `--gzip` flag in the above example will automatically turn of
 and will instead write coverage to block gzipped files using the `--prefix` or input filename as the base filename.
 These block gzipped files will also have a Tabix-like index `.csi` built for them as well.  There's a known bug where chromosomes with 0 coverage are still reported in the block-gzipped files but are not indexed.
 
-## BAM Processing Subcommands
+# BAM Processing Subcommands
 
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
@@ -77,9 +75,9 @@ If `--min-unique-qual` and `--bigwig` are specified the "unique" coverage will a
 
 Also, `--bigwig` will not work on Windows, megadepth as of release 1.0.5 will simply skip writing a BigWig if this option is passed in with the Windows build, but will process other options which still make sense (e.g. `--auc`).
 
-### Coverage over regions
+## Coverage over regions
 
-#### `megadepth /path/to/bamfile --annotation <annotated_file.bed>`
+### `megadepth /path/to/bamfile --annotation <annotated_file.bed>`
 
 generates per-base counts across all regions in `<annotated_file.bed>` file.
 
@@ -93,17 +91,17 @@ This will be the same order as the BED file *if* coordinates from the same chrom
 
 You can skip the index with `--no-index` in cases where the regions cover nearly the whole genome (can be faster than jumping around the index).
 
-#### `megadepth /path/to/bamfile --annotation 400`
+### `megadepth /path/to/bamfile --annotation 400`
 
 generates coverage sums over 400 bp contiguous windows of the genome. 
 
 Will default to reporting to `STDOUT` unless `--no-annotation-stdout` or `--gzip` is passed in.
 
-### Coverage over the whole genome
+## Coverage over the whole genome
 
 There's multiple ways to get whole genome, per-base coverage:
 
-#### `megadepth /path/to/bamfile --coverage`
+### `megadepth /path/to/bamfile --coverage`
 
 Generates per-base counts of overlapping reads across all bases of the genome.  
 
@@ -111,14 +109,14 @@ Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` o
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` or `--gzip` is passed in.
 
-`megadepth /path/to/bamfile --bigwig`
+### `megadepth /path/to/bamfile --bigwig`
 
 Outputs coverage as BigWig file(s) instead of TSVs (including for `--min-unique-qual` option) this is an alterate subcommand to `--coverage`.
 
 By default, `--coverage` and `--bigwig` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
 However, double counting can be allowed with the `--double-count` option, which may result in faster running times if precise counting is not needed.
 
-#### `megadepth /path/to/bamfile --auc`
+### `megadepth /path/to/bamfile --auc`
 
 Reports area-under-coverage across all bases (one large sum of overlapping reads, per-base).
 This will also report additional counts for:
@@ -128,6 +126,8 @@ This will also report additional counts for:
 This computes the coverage (same as `--coverage` and `--bigwig`) under the hood, but won't output it unless `--coverage` or `--bigwig` is also passed in.
 
 Will default to reporting to `STDOUT` unless `--no-auc-stdout` is passed in.
+
+## Fragment Length Distribution
 
 ### `megadepth /path/to/bamfile --frag-dist`
 
@@ -153,6 +153,8 @@ Intron length(s) in the paired alignments are also subtracted from the `TLEN` fi
 These numbers should be taken as an estimation of the fragment length distribtion.
 
 Reports to a file with suffix `.frags.tsv`.
+
+## Alternate Base Coverage
 
 ### `megadepth /path/to/bamfile --alts`
 
@@ -228,6 +230,8 @@ Output is comma separated with 7 fields:
 | 6     | Base (A/T)                                                                       |
 | 7     | Count of the base in column 6                                                    |
 
+## Co-occurring Junctions
+
 ### `megadepth /path/to/bamfile --junctions`
 
 Extract locally co-occurring junctions from BAM.
@@ -261,6 +265,8 @@ then try adding the argument `--long-reads` as it will enlarge the buffer used t
 This enables megadepth to have a better chance of handling really long CIGAR strings.
 
 Reports to a file with suffix `.jxs.tsv`.
+
+# Building
 
 ## Build dependencies
 
