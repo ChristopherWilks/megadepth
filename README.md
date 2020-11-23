@@ -59,9 +59,7 @@ A BAM/CRAM index file is recommended for best performance on sparse regions when
 
 If a CRAM file is being processed, the reference FASTA may be retrieved from an external webserver (default) or specified with `--fasta /path/to/reference.fa`.
 
-```
-megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --annotation <annotated_intervals.bed> --prefix <output_file_prefix>
-```
+Read alignments can be filtered in (inclusion) via `--filter-in <integer>` or filtered out (exclusion) via `--filter-out <integer>`, where `<integer>` is as bitmask according to the SAM specification in decimal. The defaults are `--filter-in 4294967295` and `--filter-out 260` to skip only unmapped and secondary alignments, processing everything else.
 
 Concrete example command for sample `SRR1258218` (NA12878 Illumina RNA-seq):
 
@@ -287,23 +285,20 @@ Reports to a file with suffix `.jxs.tsv`.
     * See `get_htslib.sh` for a script that gets a recent version and compiles it with minimal dependencies
 * [libBigWig](https://github.com/dpryan79/libBigWig)
     * See `get_libBigWig.sh` for a script that gets a recent version and compiles it
+* [libdeflate](https://github.com/ebiggers/libdeflate)
+    * See `get_libdeflate.sh` for a script that gets a recent version and compiles it
 * zlib static library [only if building a static binary]
     * See `get_zlib.sh` for a script that gets a recent version and compiles the static library
 
+ 
 ## Building
 
-Run `build_no_container.sh` with one of three options:
+Run `build_no_container.sh` with either of these options:
 
 * `megadepth_dynamic` (default)
 
-Builds a fully dynamic binary, requires that libraries for `htslib` & `libBigWig` be available in the target environment
-
-* `megadepth_statlib`
-
-Builds a partially dynamic binary, but with `htslib` and `libBigWig` statically linked, still requires that libcurl and zlib be present in the target environment
+Builds a fully dynamic binary, requires that libraries for `htslib`, `libBigWig`, `zlib`, and `libdeflate` be available in the environment where megadepth will be run
 
 * `megadepth_static`
 
 Builds a fully static binary, w/o remote BigWig processing support (due to no libcurl)
-
-
