@@ -52,8 +52,12 @@ Or if you only want the AUC for the whole BigWig:
 megadepth SRR1258218.bw
 ```
 
-## BAM processing
-While megadepth doesn't require a BAM index file (typically `<prefix>.bam.idx`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
+## BAM/CRAM processing
+While megadepth doesn't require a BAM/CRAM index file (typically `<prefix>.bam.bai` or `<prefix>.bam.crai`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
+
+A BAM/CRAM index file is recommended for best performance on sparse regions when `--annotation <regions.bed>` is used.
+
+If a CRAM file is being processed, the reference FASTA may be retrieved from an external webserver (default) or specified with `--fasta /path/to/reference.fa`.
 
 ```
 megadepth /path/to/bamfile --threads <num_threads> --bigwig --auc --annotation <annotated_intervals.bed> --prefix <output_file_prefix>
@@ -74,7 +78,7 @@ Also, the optional `--gzip` flag in the above example will automatically turn of
 and will instead write coverage to block gzipped files using the `--prefix` or input filename as the base filename.
 These block gzipped files will also have a Tabix-like index `.csi` built for them as well.  There's a known bug where chromosomes with 0 coverage are still reported in the block-gzipped files but are not indexed.
 
-# BAM Processing Subcommands
+# BAM/CRAM Processing Subcommands
 
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
