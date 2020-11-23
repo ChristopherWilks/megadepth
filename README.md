@@ -53,9 +53,6 @@ megadepth SRR1258218.bw
 ```
 
 ## BAM/CRAM processing
-
-![BAM Processing](megadepth_detailed.png)
-
 While megadepth doesn't require a BAM/CRAM index file (typically `<prefix>.bam.bai` or `<prefix>.bam.crai`) to run, it *does* require that the input BAM be sorted by chromosome at least.  This is because megadepth allocates a per-base counts array across the entirety of the current chromosome before processing the alignments from that chromosome.  If reads alignments are not grouped by chromosome in the BAM, undefined behavior will occur including massive slow downs and/or memory allocations.
 
 A BAM/CRAM index file is recommended for best performance on sparse regions when `--annotation <regions.bed>` is used.
@@ -80,6 +77,8 @@ and will instead write coverage to block gzipped files using the `--prefix` or i
 These block gzipped files will also have a Tabix-like index `.csi` built for them as well.  There's a known bug where chromosomes with 0 coverage are still reported in the block-gzipped files but are not indexed.
 
 # BAM/CRAM Processing Subcommands
+
+![BAM Processing](megadepth_detailed.png)
 
 For any and all subcommands below, if run together, `megadepth` will do only one pass through the BAM file.
 While any given subcommand may not be particularly fast on its own, doing them all together can save time.
