@@ -12,9 +12,7 @@ We recommend use of one of the pre-compiled binaries (only x86_64):
 
 *this binary has the HTSlib, libBigWig, libcurl, libdeflate, & zlib libraries statically linked.
 
-Megadepth is also available under R/Bioconductor:
-
-http://www.bioconductor.org/packages/release/bioc/html/megadepth.html
+Megadepth is available under [R/Bioconductor](http://www.bioconductor.org/packages/release/bioc/html/megadepth.html)
 
 There is also a Docker image that can be used to run `megadepth`:
 
