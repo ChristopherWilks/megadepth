@@ -198,6 +198,19 @@ reported.
 | `H`   | Hard clip  |            (nothing) |        Yes |
 | `P`   | Padding    |            (nothing) |        Yes |
 
+For example, assuming a BAM file produced by the STAR v2.7.3a aligner which has 
+an alignment record at chromosome 11, starting as position 100 (1-base), with a mismatch of a `T` (alt) vs. a `G` (ref) 11 bases from the left starting position of the alignment (inclusive):
+
+`... chr11 100 ... MD:Z:10G20`
+
+there will be a corresponding line in the output of `--alts`
+
+`10,109,X,T`
+
+where `T` is the base in the read sequence aligned in that record (reference `G`), 
+and 10 is the offset of the chromosome ID from the BAM header 
+(this offset will vary with the reference used to align).
+
 See the usage message for options, which can selectively disable some
 of the outputs listed above.  E.g. the soft-clipping outputs can be
 very large, so they're not printed unless `--include-softclip` is
