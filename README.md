@@ -194,7 +194,7 @@ reported.
 | `X`   | Mismatch   |            Read base |         No |
 | `D`   | Deletion   |      # deleted bases |        Yes |
 | `I`   | Insertion  |  Inserted read bases |        Yes |
-| `S`   | Soft clip  |   Soft ckipped bases |        Yes |
+| `S`   | Soft clip  |   Soft clipped bases |        Yes |
 | `H`   | Hard clip  |            (nothing) |        Yes |
 | `P`   | Padding    |            (nothing) |        Yes |
 
