@@ -1,3 +1,5 @@
+![Megadepth_logo](megadepth_logo.png)
+
 [![Join the chat at https://gitter.im/megadepth/community](https://badges.gitter.im/megadepth/community.svg)](https://gitter.im/megadepth/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ![build](https://github.com/ChristopherWilks/megadepth/workflows/build/badge.svg)
