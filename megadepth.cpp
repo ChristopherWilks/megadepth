@@ -432,11 +432,12 @@ static void parse_mdz(
     }
 }
 
-static void output_from_cigar_mdz(
+static bool output_from_cigar_mdz(
         const bam1_t *rec,
         std::vector<MdzOp>& mdz,
         std::fstream& fout,
         uint64_t* total_softclip_count,
+        const char* qname,
         bool print_qual = false,
         bool include_sc = false,
         bool only_polya_sc = false,
@@ -449,6 +450,7 @@ static void output_from_cigar_mdz(
     uint32_t *cigar = bam_get_cigar(rec);
     size_t mdzi = 0, seq_off = 0;
     int32_t ref_off = rec->core.pos;
+    bool found = false;
     for(unsigned int k = 0; k < rec->core.n_cigar; k++) {
         int op = bam_cigar_op(cigar[k]);
         int run = bam_cigar_oplen(cigar[k]);
@@ -474,12 +476,13 @@ static void output_from_cigar_mdz(
                         // skip
                     } else {
                         fout << rec->core.tid << ',' << ref_off << ",X,";
-                        seq_substring(fout, seq, seq_off, (size_t)run_comb);
+                        seq_substring(fout, seq, seq_off, (size_t)run_comb) << ',' << qname;
                         if(print_qual) {
                             fout << ',';
                             cstr_substring(fout, qual, seq_off, (size_t)run_comb);
                         }
                         fout << '\n';
+                        found = true;
                     }
                 }
                 seq_off += run_comb;
@@ -493,8 +496,9 @@ static void output_from_cigar_mdz(
             }
         } else if(op == BAM_CINS) {
             fout << rec->core.tid << ',' << ref_off << ",I,";
-            seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
+            seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
             seq_off += run;
+            found = true;
         } else if(op == BAM_CSOFT_CLIP) {
             if(include_sc) {
                 char direction = '+';
@@ -506,12 +510,14 @@ static void output_from_cigar_mdz(
                     int count_polya = polya_check(seq, seq_off, (size_t)run, &c);
                     if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
                         fout << rec->core.tid << ',' << ref_off << ",S,";
-                        fout << run << ',' << direction << ',' << c << ',' << count_polya << '\n';
+                        fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << '\n';
+                        found = true;
                     }
                 }
                 else {
                     fout << rec->core.tid << ',' << ref_off << ",S,";
-                    seq_substring(fout, seq, seq_off, (size_t)run) << '\n';
+                    seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
+                    found = true;
                 }
             }
             seq_off += run;
@@ -520,8 +526,9 @@ static void output_from_cigar_mdz(
             assert(run == mdz[mdzi].run);
             assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
-            fout << rec->core.tid << ',' << ref_off << ",D," << run << '\n';
+            fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << '\n';
             ref_off += run;
+            found = true;
         } else if (op == BAM_CREF_SKIP) {
             ref_off += run;
         } else if (op == BAM_CHARD_CLIP) {
@@ -533,14 +540,16 @@ static void output_from_cigar_mdz(
         }
     }
     assert(mdzi == mdz.size());
+    return found;
 }
 
-static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc) {
+static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc, const char* qname) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
+    bool found = false;
     if(n_cigar == 1) {
-        return;
+        return found;
     }
     int32_t refpos = rec->core.pos;
     int32_t seqpos = 0;
@@ -549,8 +558,9 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
         int run = bam_cigar_oplen(cigar[k]);
         switch(op) {
             case BAM_CDEL: {
-                fout << rec->core.tid << ',' << refpos << ",D," << run << '\n';
+                fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << '\n';
                 refpos += run;
+                found = true;
                 break;
             }
             case BAM_CSOFT_CLIP: {
@@ -564,12 +574,14 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                         int count_polya = polya_check(seq, (size_t)seqpos, (size_t)run, &c);
                         if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
                             fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                            fout << run << ',' << direction << ',' << c << ',' << count_polya << '\n';
+                            fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << "," << '\n';
+                            found = true;
                         }
                     }
                     else {
                         fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                        seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << '\n';
+                        seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
+                        found = true;
                     }
                 }
                 seqpos += run;
@@ -577,8 +589,9 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
             }
             case BAM_CINS: {
                 fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << '\n';
+                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
                 seqpos += run;
+                found = true;
                 break;
             }
             case BAM_CREF_SKIP: {
@@ -601,6 +614,7 @@ static void output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
             }
         }
     }
+    return found;
 }
 
 static void print_header(const bam_hdr_t * hdr) {
@@ -797,7 +811,8 @@ static uint64_t print_array(const char* prefix,
                     window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%ld\n", chrm, window_start, i, wsum); 
                 else if(op == cmean) {
                     double wmean = (double)wsum / (double)window_size;
-                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, (round(wmean*100.)/100.)); 
+                    //window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, (round(wmean*100.)/100.)); 
+                    window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\n", chrm, window_start, i, wmean); 
                     //window_bytes_written = sprintf(wbuf, "%s\t%u\t%u\t%.2f\t%.11f\t%ld\n", chrm, window_start, i, (round(wmean*100.)/100.), wmean, wsum); 
                 }
 
@@ -2199,6 +2214,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool compute_coverage = false;
     int bw_unique_min_qual = 0;
     read2len overlapping_mates;
+    read2len alts_overlapping_mates;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
     //--coverage -> output perbase coverage to STDOUT (compute_coverage=true)
@@ -2371,6 +2387,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     bool no_region = true;
     if(num_annotations > 0)
         no_region = false;
+
+    //default of empty string for read name for alts
+    char* qname_for_alts = new char[1];
+    qname_for_alts[0] = '\0';
+
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations_for_index, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
     for(++bitr; bitr != end; ++bitr) {
@@ -2511,7 +2532,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     ends[end_refpos-1]++;
                 }
             }
-            ptid = tid;
 
             //echo back the sam record
             if(echo_sam) {
@@ -2523,9 +2543,77 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 kstring_out(std::cout, &sambuf);
                 std::cout << '\n';
             }
+
             //*******Alternate base coverages, soft clipping output
             //track alt. base coverages
             if(compute_alts) {
+                //TODO: need to test the mate pair detection here
+                char* qname_for_alts_ = qname_for_alts;
+                bool track_qname = false;
+                bool first_mate_w_overlap = false;
+                std::vector<MateInfo*>* mate_vec = nullptr;
+                MateInfo* mate_info = nullptr;
+                if(!double_count) {
+                    if(tid != ptid) {
+                        if(ptid != -1)
+                            alts_overlapping_mates.clear();
+                    }
+                    if(end_refpos == -1)
+                        end_refpos = bam_endpos(rec);
+
+                    bool possible_overlap = rec->core.tid == rec->core.mtid && end_refpos > mrefpos;
+                    if(possible_overlap)
+                        qname_for_alts_ = qname;
+
+                    first_mate_w_overlap = possible_overlap && refpos <= mrefpos;
+                    int32_t refpos_to_hash = mrefpos;
+                    bool second_mate = possible_overlap && refpos >= mrefpos;
+                    if(second_mate)
+                        refpos_to_hash = refpos;
+
+                    auto mit = alts_overlapping_mates.find(refpos_to_hash);
+                    bool potential_mate_found = mit != alts_overlapping_mates.end();
+                    //if we found a potential mate in the hash based on pos
+                    int mvi = 0;
+                    const std::string tn(qname);
+                    if(potential_mate_found) {
+                        mate_vec = mit->second;
+                        for(auto mate : *mate_vec) {
+                            //fprintf(stderr,"name check for refpos %u mrefpos %u: %s vs. %s\n",refpos, mrefpos, tn.c_str(), mate->qname);
+                            if(!mate->erased && mate->qname == qname) {
+                                mate_info = mate;
+                                break;
+                            }
+                            mvi++;
+                        }
+                    }
+                    //first mate in the pair, only track if we're not already tracking due to coverage
+                    if(first_mate_w_overlap && !mate_info) {
+                        mate_info = new MateInfo;
+                        mate_info->qname = qname;
+                        mate_info->erased = false;
+                        //if we didn't find a previous vector, create one
+                        if(!potential_mate_found) {
+                            mate_vec = new std::vector<MateInfo*>;
+                            alts_overlapping_mates.emplace(mrefpos, mate_vec);
+                        }
+                        //mate_vec->push_back(mate_info);
+                        if(!compute_coverage)
+                            num_overlapping_pairs++;
+                    }
+                    else if(second_mate && mate_info) {
+                        //make sure we're printing out the read name for later matching
+                        qname_for_alts_ = qname;
+                        //now clean up
+                        mate_info->erased = true;
+                        delete mate_info;
+                        mate_vec->erase(mate_vec->begin()+mvi);
+                        if(mate_vec->size() == 0) {
+                            delete mate_vec;
+                            alts_overlapping_mates.erase(mit);
+                        }
+                    }
+                }
                 if(first) {
                     if(print_qual) {
                         uint8_t *qual = bam_get_qual(rec);
@@ -2537,21 +2625,26 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     first = false;
                 }
                 const uint8_t *mdz = bam_aux_get(rec, "MD");
+                 
                 if(!mdz) {
                     if(require_mdz) {
                         std::stringstream ss;
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc); // just use CIGAR
+                    track_qname = output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc, qname_for_alts_); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
-                    output_from_cigar_mdz(
-                            rec, mdzbuf, alts_file, &total_softclip_count,
+                    track_qname = output_from_cigar_mdz(
+                            rec, mdzbuf, alts_file, &total_softclip_count, qname_for_alts_, 
                             print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
+                if(!double_count && first_mate_w_overlap && track_qname && mate_info && mate_vec)
+                    mate_vec->push_back(mate_info);
             }
+            ptid = tid;
+
             //*******Run various cigar-related functions for 1 pass through the cigar string
             if(num_cigar_ops > 0)
                 process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
