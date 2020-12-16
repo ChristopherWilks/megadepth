@@ -121,6 +121,14 @@ static const void print_version() {
     std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
 }
 
+struct Coordinate {
+    char* chrm;
+    int32_t start;
+    int32_t end;
+};
+
+static char emptystr[] = "\0";
+
 static const char USAGE[] = "BAM and BigWig utility.\n"
     "\n"
     "Usage:\n"
@@ -432,12 +440,19 @@ static void parse_mdz(
     }
 }
 
+static bool check_for_overlap(std::vector<Coordinate>* overlapping_coords, int starting_idx, int32_t refpos) {
+    for(auto it : *overlapping_coords)
+        if(it.start <= refpos && it.end >= refpos)
+            return true;
+}
+
 static bool output_from_cigar_mdz(
         const bam1_t *rec,
         std::vector<MdzOp>& mdz,
         std::fstream& fout,
         uint64_t* total_softclip_count,
-        const char* qname,
+        char* real_qname,
+        std::vector<Coordinate>* overlapping_coords,
         bool print_qual = false,
         bool include_sc = false,
         bool only_polya_sc = false,
@@ -451,6 +466,7 @@ static bool output_from_cigar_mdz(
     size_t mdzi = 0, seq_off = 0;
     int32_t ref_off = rec->core.pos;
     bool found = false;
+    bool check_for_overlaps_flag = overlapping_coords->size() > 0;
     for(unsigned int k = 0; k < rec->core.n_cigar; k++) {
         int op = bam_cigar_op(cigar[k]);
         int run = bam_cigar_oplen(cigar[k]);
@@ -459,6 +475,7 @@ static bool output_from_cigar_mdz(
             ss << "Found read-consuming CIGAR op after MD:Z had been exhausted" << std::endl;
             throw std::runtime_error(ss.str());
         }
+        int coord_idx = 0;
         if(op == BAM_CMATCH || op == BAM_CDIFF || op == BAM_CEQUAL) {
             // Look for block matches and mismatches in MD:Z string
             int runleft = run;
@@ -475,6 +492,9 @@ static bool output_from_cigar_mdz(
                     if(!include_n_mms && run_comb == 1 && seq_nt16_str[cread] == 'N') {
                         // skip
                     } else {
+                        char* qname = emptystr; 
+                        if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
+                            qname = real_qname; 
                         fout << rec->core.tid << ',' << ref_off << ",X,";
                         seq_substring(fout, seq, seq_off, (size_t)run_comb) << ',' << qname;
                         if(print_qual) {
@@ -495,6 +515,9 @@ static bool output_from_cigar_mdz(
                 }
             }
         } else if(op == BAM_CINS) {
+            char* qname = emptystr; 
+            if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
+                qname = real_qname; 
             fout << rec->core.tid << ',' << ref_off << ",I,";
             seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
             seq_off += run;
@@ -509,12 +532,18 @@ static bool output_from_cigar_mdz(
                     char c;
                     int count_polya = polya_check(seq, seq_off, (size_t)run, &c);
                     if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
+                        char* qname = emptystr; 
+                        if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
+                            qname = real_qname; 
                         fout << rec->core.tid << ',' << ref_off << ",S,";
                         fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << '\n';
                         found = true;
                     }
                 }
                 else {
+                    char* qname = emptystr; 
+                    if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
+                        qname = real_qname; 
                     fout << rec->core.tid << ',' << ref_off << ",S,";
                     seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
                     found = true;
@@ -526,6 +555,9 @@ static bool output_from_cigar_mdz(
             assert(run == mdz[mdzi].run);
             assert(strlen(mdz[mdzi].str) == run);
             mdzi++;
+            char* qname = emptystr; 
+            if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
+                qname = real_qname; 
             fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << '\n';
             ref_off += run;
             found = true;
@@ -543,7 +575,7 @@ static bool output_from_cigar_mdz(
     return found;
 }
 
-static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc, const char* qname) {
+static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc, char* real_qname, std::vector<Coordinate>* overlapping_coords) {
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -553,14 +585,18 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
     }
     int32_t refpos = rec->core.pos;
     int32_t seqpos = 0;
+    int coord_idx = 0;
+    bool check_for_overlaps_flag = overlapping_coords->size() > 0;
     for(uint32_t k = 0; k < n_cigar; k++) {
         int op = bam_cigar_op(cigar[k]);
         int run = bam_cigar_oplen(cigar[k]);
         switch(op) {
             case BAM_CDEL: {
+                char* qname = emptystr; 
+                if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
+                    qname = real_qname; 
                 fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << '\n';
                 refpos += run;
-                found = true;
                 break;
             }
             case BAM_CSOFT_CLIP: {
@@ -573,12 +609,18 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                         char c;
                         int count_polya = polya_check(seq, (size_t)seqpos, (size_t)run, &c);
                         if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
+                            char* qname = emptystr; 
+                            if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
+                                qname = real_qname; 
                             fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                            fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << "," << '\n';
+                            fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << '\n';
                             found = true;
                         }
                     }
                     else {
+                        char* qname = emptystr; 
+                        if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
+                            qname = real_qname; 
                         fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                         seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
                         found = true;
@@ -588,6 +630,9 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                 break;
             }
             case BAM_CINS: {
+                char* qname = emptystr; 
+                if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
+                    qname = real_qname; 
                 fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                 seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
                 seqpos += run;
@@ -1132,13 +1177,17 @@ struct MateInfo {
     bool erased;
 };
 
+
+
 //typedef hashmap<std::string, uint32_t*> read2len;
 //typedef hashmap<uint32_t, uint32_t*> read2len;
 typedef hashmap<uint32_t, std::vector<MateInfo*>*> read2len;
+typedef hashmap<std::string, std::vector<Coordinate>> read2overlaps;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                         uint32_t* unique_coverages, const bool double_count,
                                         const int min_qual, read2len* overlapping_mates,
-                                        int32_t* total_intron_length, bool no_region=true) {
+                                        int32_t* total_intron_length, bool no_region=true, 
+                                        read2overlaps* overlap_coords=nullptr) {
     int32_t refpos = rec->core.pos;
     int32_t mrefpos = rec->core.mpos;
     int32_t refpos_to_hash = mrefpos;
@@ -1156,7 +1205,10 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
     int32_t mendpos = 0;
     int n_mspans = 0;
     std::unique_ptr<int32_t[]> mspans;
+    //std::unique_ptr<int32_t[]> mspans_which_overlap;
     int mspans_idx = 0;
+    int mspans_which_overlap_idx = 0;
+    auto overlapping_coords_it = overlap_coords->begin();
     const std::string tn(qname);
     int32_t end_pos = bam_endpos(rec);
     uint32_t mate_passes_quality = 0;
@@ -1217,6 +1269,9 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
             }
             //-------Second Mate Check
             else if(second_mate && mate_info) {
+                //setup for tracking actual overlapping segments for alt base output
+                if(overlap_coords)
+                    overlapping_coords_it = overlap_coords->emplace(tn, std::vector<Coordinate>()).first;
                 uint32_t mn_cigar = mate_info->n_cigar;
                 mate_passes_quality = mate_info->passing_qual;
                 uint32_t* mcigar = mate_info->cigar;
@@ -1224,6 +1279,8 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 int32_t malgn_end_pos = real_mate_pos;
                 //bash cigar to get spans of overlap
                 mspans.reset(new int32_t[mn_cigar * 2]);
+                //if(overlap_coords)
+                    //mspans_which_overlap.reset(new int32_t[(mn_cigar * 2) + 1]);
                 for (k = 0; k < mn_cigar; ++k) {
                     const int cigar_op = bam_cigar_op(mcigar[k]);
                     if(bam_cigar_type(cigar_op)&2) {
@@ -1295,6 +1352,18 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                 next_left_end = mspans[mspans_idx * 2 + 1];
                             }
                             decrement_coverages(coverages + left_end, right_end - left_end, no_region);
+                            if(overlap_coords) {
+                                int32_t ostart = left_end;
+                                int32_t oend = (ostart + (right_end - left_end)) - 1;
+                                Coordinate coord;
+                                coord.start = ostart;
+                                coord.end = oend;
+                                overlapping_coords_it->second.push_back(coord);
+                                //base-1 coords for overlapping segment
+                                //mspans_which_overlap[mspans_which_overlap_idx * 2] = ostart;
+                                //mspans_which_overlap[mspans_which_overlap_idx * 2 + 1] = (ostart + (right_end - left_end)) - 1;
+                                //mspans_which_overlap_idx++;
+                            }
                             if(mate_passes_quality)
                                 decrement_coverages(unique_coverages + left_end, right_end - left_end, no_region);
                             left_end = next_left_end;
@@ -2215,6 +2284,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     int bw_unique_min_qual = 0;
     read2len overlapping_mates;
     read2len alts_overlapping_mates;
+    read2overlaps* overlap_coords = nullptr;
     bigWigFile_t *bwfp = nullptr;
     bigWigFile_t *ubwfp = nullptr;
     //--coverage -> output perbase coverage to STDOUT (compute_coverage=true)
@@ -2326,6 +2396,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         sprintf(afn, "%s.alts.tsv", prefix);
         alts_file.open(afn, std::fstream::out);
         compute_alts = true;
+        overlap_coords = new read2overlaps[1]();
     }
     FILE* jxs_file = nullptr;
     bool extract_junctions = false;
@@ -2389,8 +2460,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         no_region = false;
 
     //default of empty string for read name for alts
-    char* qname_for_alts = new char[1];
-    qname_for_alts[0] = '\0';
+    char* qname_for_alts = emptystr;
 
     BAMIterator<T> bitr(rec_, bam_fh, hdr, bam_arg, annotations, num_annotations_for_index, chrm_order);
     BAMIterator<T> end(nullptr, nullptr, nullptr);
@@ -2467,7 +2537,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(unique)
                         reset_array(unique_coverages.get(), hdr->target_len[tid]);
                 }
-                end_refpos = calculate_coverage(rec, coverages.get(), unique_coverages.get(), double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len, no_region);
+                end_refpos = calculate_coverage(rec, coverages.get(), unique_coverages.get(), double_count, bw_unique_min_qual, &overlapping_mates, &total_intron_len, no_region, overlap_coords=overlap_coords);
             }
             //additional counting options which make use of knowing the end coordinate/maplen
             //however, if we're already running calculate_coverage, we don't need to redo this
@@ -2553,11 +2623,13 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 bool first_mate_w_overlap = false;
                 std::vector<MateInfo*>* mate_vec = nullptr;
                 MateInfo* mate_info = nullptr;
+                std::vector<Coordinate> overlapping_coords;
+                bool potential_mate_found = false;
                 if(!double_count) {
-                    if(tid != ptid) {
+                    /*if(tid != ptid) {
                         if(ptid != -1)
                             alts_overlapping_mates.clear();
-                    }
+                    }*/
                     if(end_refpos == -1)
                         end_refpos = bam_endpos(rec);
 
@@ -2571,12 +2643,16 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(second_mate)
                         refpos_to_hash = refpos;
 
-                    auto mit = alts_overlapping_mates.find(refpos_to_hash);
-                    bool potential_mate_found = mit != alts_overlapping_mates.end();
+                    //auto mit = alts_overlapping_mates.find(refpos_to_hash);
+                    //bool potential_mate_found = mit != alts_overlapping_mates.end();
+                    auto mit = overlap_coords->find(qname);
+                    potential_mate_found = mit != overlap_coords->end();
+                    if(potential_mate_found)
+                        overlapping_coords = mit->second;
                     //if we found a potential mate in the hash based on pos
                     int mvi = 0;
                     const std::string tn(qname);
-                    if(potential_mate_found) {
+                    /*if(potential_mate_found) {
                         mate_vec = mit->second;
                         for(auto mate : *mate_vec) {
                             //fprintf(stderr,"name check for refpos %u mrefpos %u: %s vs. %s\n",refpos, mrefpos, tn.c_str(), mate->qname);
@@ -2612,7 +2688,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                             delete mate_vec;
                             alts_overlapping_mates.erase(mit);
                         }
-                    }
+                    }*/
                 }
                 if(first) {
                     if(print_qual) {
@@ -2632,16 +2708,16 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    track_qname = output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc, qname_for_alts_); // just use CIGAR
+                    track_qname = output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc, qname, &overlapping_coords); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
                     track_qname = output_from_cigar_mdz(
-                            rec, mdzbuf, alts_file, &total_softclip_count, qname_for_alts_, 
+                            rec, mdzbuf, alts_file, &total_softclip_count, qname, &overlapping_coords, 
                             print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
-                if(!double_count && first_mate_w_overlap && track_qname && mate_info && mate_vec)
-                    mate_vec->push_back(mate_info);
+                /*if(!double_count && first_mate_w_overlap && track_qname && mate_info && mate_vec)
+                    mate_vec->push_back(mate_info);*/
             }
             ptid = tid;
 
