@@ -25,6 +25,17 @@
 
 */
 
+/*
+.___  ___.  _______   _______      ___       _______   _______ .______   .___________. __    __  
+|   \/   | |   ____| /  _____|    /   \     |       \ |   ____||   _  \  |           ||  |  |  | 
+|  \  /  | |  |__   |  |  __     /  ^  \    |  .--.  ||  |__   |  |_)  | `---|  |----`|  |__|  | 
+|  |\/|  | |   __|  |  | |_ |   /  /_\  \   |  |  |  ||   __|  |   ___/      |  |     |   __   | 
+|  |  |  | |  |____ |  |__| |  /  _____  \  |  '--'  ||  |____ |  |          |  |     |  |  |  | 
+|__|  |__| |_______| \______| /__/     \__\ |_______/ |_______|| _|          |__|     |__|  |__| 
+*/                                                                                                 
+
+
+
 
 #define __STDC_FORMAT_MACROS
 #include <algorithm>
@@ -444,6 +455,7 @@ static bool check_for_overlap(std::vector<Coordinate>* overlapping_coords, int s
     for(auto it : *overlapping_coords)
         if(it.start <= refpos && it.end >= refpos)
             return true;
+    return false;
 }
 
 static bool output_from_cigar_mdz(
@@ -496,11 +508,9 @@ static bool output_from_cigar_mdz(
                         if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                             qname = real_qname; 
                         fout << rec->core.tid << ',' << ref_off << ",X,";
-                        seq_substring(fout, seq, seq_off, (size_t)run_comb) << ',' << qname;
-                        if(print_qual) {
-                            fout << ',';
+                        seq_substring(fout, seq, seq_off, (size_t)run_comb) << ',' << qname << ',';
+                        if(print_qual)
                             cstr_substring(fout, qual, seq_off, (size_t)run_comb);
-                        }
                         fout << '\n';
                         found = true;
                     }
@@ -519,7 +529,7 @@ static bool output_from_cigar_mdz(
             if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                 qname = real_qname; 
             fout << rec->core.tid << ',' << ref_off << ",I,";
-            seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
+            seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << ",\n";
             seq_off += run;
             found = true;
         } else if(op == BAM_CSOFT_CLIP) {
@@ -545,7 +555,7 @@ static bool output_from_cigar_mdz(
                     if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                         qname = real_qname; 
                     fout << rec->core.tid << ',' << ref_off << ",S,";
-                    seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << '\n';
+                    seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << ",\n";
                     found = true;
                 }
             }
@@ -558,7 +568,7 @@ static bool output_from_cigar_mdz(
             char* qname = emptystr; 
             if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                 qname = real_qname; 
-            fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << '\n';
+            fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << ",\n";
             ref_off += run;
             found = true;
         } else if (op == BAM_CREF_SKIP) {
@@ -595,7 +605,7 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                 char* qname = emptystr; 
                 if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
                     qname = real_qname; 
-                fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << '\n';
+                fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << ",\n";
                 refpos += run;
                 break;
             }
@@ -622,7 +632,7 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                         if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
                             qname = real_qname; 
                         fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                        seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
+                        seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << ",\n";
                         found = true;
                     }
                 }
@@ -634,7 +644,7 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                 if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
                     qname = real_qname; 
                 fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << '\n';
+                seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << ",\n";
                 seqpos += run;
                 found = true;
                 break;
