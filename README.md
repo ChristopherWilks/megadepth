@@ -218,7 +218,10 @@ The empty field is reserved for the case where the two mates in a read pair
 have an overlapping alignment.  In that case the read ID/name is printed in the
 5th field to indicate overlap.  Typically this will allow for the removal of
 duplicate alternative base calls and help to inform deciding between conflicting
-calls where the overlapping mates may not have the same call.
+calls where the overlapping mates may not have the same call.  This only applies to 
+mismatches ('X'), insertions ('I'), and deletions ('D'), not to soft-clipping (below).
+If coverage is not being computed (`--bigwig` or `--coverage`) as well, overlapping pairs
+will *not* be flagged when `--alts` is used.
 
 See the usage message for options, which can selectively disable some
 of the outputs listed above.  E.g. the soft-clipping outputs can be
@@ -263,9 +266,10 @@ Output is comma separated with 7 fields:
 | 2     | POS field (0-based ref offset of either leftmost or rightmost aligned base)      |
 | 3     | Operation label (always "S")                                                     |
 | 4     | Number of bases in the softclip (run length)                                     |
-| 5     | Direction to move from POS ('+' for end of alignment, '-' for start of alignment)|
-| 6     | Base (A/T)                                                                       |
-| 7     | Count of the base in column 6                                                    |
+| 5     | Intentionally left blank to be compatible with previous alt. format              |
+| 6     | Direction to move from POS ('+' for end of alignment, '-' for start of alignment)|
+| 7     | Base (A/T)                                                                       |
+| 8     | Count of the base in column 6                                                    |
 
 ## Co-occurring Junctions
 
