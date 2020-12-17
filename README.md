@@ -120,7 +120,8 @@ There's multiple ways to get whole genome, per-base coverage:
 
 ### `megadepth /path/to/bamfile --coverage`
 
-Generates per-base counts of overlapping reads across all bases of the genome.  
+Generates per-base counts of overlapping reads across all bases of the genome.
+All coverage is included, even mismatching bases.  So this output should be thought of as ref base + alternate base sums (if using `--alts` in addition, see below).
 
 Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` option to just output TSVs
 
@@ -185,7 +186,9 @@ Output is comma separated with 4 fields:
 | 3     | Operation label (see table below)                                      |
 | 4     | Extra info (see table below)                                           |
 | 5     | Read ID/name if paired alignment overlaps between mates (blank if not) |
+| 6     | Intentionally left blank                                               |
 
+As field 6 is always blank, there will always be a trailing ',' for X, I, and D records.
 
 These could be of a few types, summarized in this table.  All of
 these are available when the `MD:Z` extra flag is present.  If not
