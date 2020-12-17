@@ -506,9 +506,12 @@ static void emit_alt_record(std::fstream& fout, CigarOp& cig, const char* qname)
         fout << cig.del_len;
     else
         fout << cig.seq;
+    delete cig.seq;
     fout << ',' << qname << ',';
-    if(cig.quals)
+    if(cig.quals) {
         fout << cig.quals;
+        delete cig.quals;
+    }
     fout << '\n';
 }
 
@@ -2357,7 +2360,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     const bool only_polya_sc = has_option(argv, argv+argc, "--only-polya");
     const bool include_n_mms = has_option(argv, argv+argc, "--include-n");
-    const bool double_count = has_option(argv, argv+argc, "--double-count");
+    //might change double_count later based on other options
+    bool double_count = has_option(argv, argv+argc, "--double-count");
     const bool report_end_coord = has_option(argv, argv+argc, "--ends");
     if(has_option(argv, argv+argc, "--test-polya")) {
         SOFTCLIP_POLYA_TOTAL_COUNT_MIN=1;
@@ -2497,6 +2501,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         compute_alts = true;
         overlap_coords = new read2overlaps[1]();
         first_mate_saved_ops = new read2cigarops[1]();
+        //we don't support correcting overlapping mate pairs for alts
+        //unless coverage is also being computed
+        //this is because we piggyback on the coverage computation
+        //to get the list of overlapping segments between mates in a pair
+        if(!compute_coverage)
+            double_count = true;
     }
     FILE* jxs_file = nullptr;
     bool extract_junctions = false;
@@ -2732,10 +2742,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 bool save_ops = false;
                 const std::string tn(qname);
                 if(!double_count) {
-                    /*if(tid != ptid) {
+                    if(tid != ptid) {
                         first_mate_saved_ops->clear();
                         overlap_coords->clear();
-                    }*/
+                    }
                     if(end_refpos == -1)
                         end_refpos = bam_endpos(rec);
 
@@ -2745,12 +2755,12 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     if(first_mate_w_overlap)
                         save_ops = true;
                     int32_t refpos_to_hash = mrefpos;
-                    second_mate = possible_overlap && refpos >= mrefpos;
+                    auto saved_ops_it = first_mate_saved_ops->find(qname);
+                    //needs to handle the case where refpos == mrefpos
+                    second_mate = possible_overlap && refpos >= mrefpos && saved_ops_it != first_mate_saved_ops->end();
                     if(second_mate) {
                         //see if we have any cigar operations to emit from our first mate
-                        auto mit = first_mate_saved_ops->find(qname);
-                        if(mit != first_mate_saved_ops->end())
-                            saved_ops = mit->second;
+                        saved_ops = saved_ops_it->second;
                         refpos_to_hash = refpos;
                     }
 
@@ -2787,11 +2797,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 }
                 if(save_ops && first_mate_saved_ops) 
                     first_mate_saved_ops->emplace(tn, saved_ops);
-                    //overlapping_coords_it = first_mate_saved_ops->emplace(tn, saved_ops).first;
-                /*if(second_mate && saved_ops.size() > 0) {
+                //cleanup
+                if(second_mate && saved_ops.size() > 0)
                     first_mate_saved_ops->erase(qname);
+                if(second_mate && potential_mate_found)
                     overlap_coords->erase(qname);
-                }*/
             }
             ptid = tid;
 
