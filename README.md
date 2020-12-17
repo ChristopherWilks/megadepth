@@ -179,11 +179,12 @@ Outputs information about non-reference-matching portions of reads.
 Output is comma separated with 4 fields:
 
 | Pos   |                                            Descrtiption |
-|-------|---------------------------------------------------------|
-| 1     | Reference/chromosome ID in the BAM file (integer)       |
-| 2     | POS field (0-based offset of leftmost aligned ref base) |
-| 3     | Operation label (see table below)                       |
-| 4     | Extra info (see table below)                            |
+|-------|------------------------------------------------------------------------|
+| 1     | Reference/chromosome ID in the BAM file (integer)                      |
+| 2     | POS field (0-based offset of leftmost aligned ref base)                |
+| 3     | Operation label (see table below)                                      |
+| 4     | Extra info (see table below)                                           |
+| 5     | Read ID/name if paired alignment overlaps between mates (blank if not) |
 
 
 These could be of a few types, summarized in this table.  All of
@@ -207,11 +208,17 @@ an alignment record at chromosome 11, starting as position 100 (1-base), with a 
 
 there will be a corresponding line in the output of `--alts`
 
-`10,109,X,T`
+`10,109,X,T,,`
 
 where `T` is the base in the read sequence aligned in that record (reference `G`), 
 and 10 is the offset of the chromosome ID from the BAM header 
 (this offset will vary with the reference used to align).
+
+The empty field is reserved for the case where the two mates in a read pair
+have an overlapping alignment.  In that case the read ID/name is printed in the
+5th field to indicate overlap.  Typically this will allow for the removal of
+duplicate alternative base calls and help to inform deciding between conflicting
+calls where the overlapping mates may not have the same call.
 
 See the usage message for options, which can selectively disable some
 of the outputs listed above.  E.g. the soft-clipping outputs can be
