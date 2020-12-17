@@ -127,12 +127,12 @@ Typically this is used to produce a BigWig, but can be used w/o the `--bigwig` o
 
 Will default to reporting to `STDOUT` unless `--no-coverage-stdout` or `--gzip` is passed in.
 
+By default, `--coverage` and `--bigwig` (below) will not double count coverage where paired-end reads overlap (same as `Mosdepth`'s default).
+However, double counting can be allowed with the `--double-count` option, which may result in faster running times if precise counting is not needed.
+
 ### `megadepth /path/to/bamfile --bigwig`
 
-Outputs coverage as BigWig file(s) instead of TSVs (including for `--min-unique-qual` option) this is an alterate subcommand to `--coverage`.
-
-By default, `--coverage` and `--bigwig` will not double count coverage where paired-end reads overlap (same as `mosdepth`'s default).
-However, double counting can be allowed with the `--double-count` option, which may result in faster running times if precise counting is not needed.
+Outputs coverage (same as `--coverage) except as BigWig file(s) instead of TSVs (including for `--min-unique-qual` option), this is an alterate subcommand to `--coverage`.
 
 ### `megadepth /path/to/bamfile --auc`
 
