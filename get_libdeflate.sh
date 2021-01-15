@@ -6,18 +6,19 @@ compiler=$1
 platform=$2
 
 target_dir=libdeflate
-if [[ -n $platform ]]; then
-    target_dir="libdeflate_"${platform}
+if [[ -z $SUBMODULE ]]; then
+    if [[ -n $platform ]]; then
+        target_dir="libdeflate_"${platform}
+    fi
+    VER=1.6
+    TARGZ=${VER}.tar.gz
+    FN=libdeflate-${TARGZ}
+    DIR=libdeflate-${VER}
+    curl -L https://github.com/ebiggers/libdeflate/archive/v${TARGZ} > $FN
+    tar -zxvf $FN
+    rm -f ${FN}
+    mv $DIR $target_dir
 fi
-
-VER=1.6
-TARGZ=${VER}.tar.gz
-FN=libdeflate-${TARGZ}
-DIR=libdeflate-${VER}
-curl -L https://github.com/ebiggers/libdeflate/archive/v${TARGZ} > $FN
-tar -zxvf $FN
-rm -f ${FN}
-mv $DIR $target_dir
 pushd $target_dir
 target="libdeflate.a"
 if [[ -z $compiler ]]; then

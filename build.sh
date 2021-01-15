@@ -21,9 +21,14 @@ if [[ ! -s zlib_ci ]] ; then
 fi
 ln -fs zlib_ci zlib
 
-if [[ ! -s libdeflate_ci ]] ; then
+if [[ ! -s libdeflate_ci/libdeflate.a ]] ; then
+    if [[ -n $SUBMODULE ]]; then
+        ln -fs libdefalte_ci libdeflate
+    fi
     ./get_libdeflate.sh
-    mv libdeflate libdeflate_ci
+    if [[ -z $SUBMODULE ]]; then
+        mv libdeflate libdeflate_ci
+    fi
 fi
 ln -fs libdeflate_ci libdeflate
 
@@ -60,6 +65,10 @@ if [[ ! -s libBigWig_ci/libBigWig.so ]] ; then
     if [[ -z $SUBMODULE ]]; then
         mv libBigWig libBigWig_ci
     fi
+    pushd libBigWig_ci
+    make clean
+    make -f Makefile.orig lib-shared
+    popd
 fi
 ln -fs libBigWig_ci libBigWig
 
@@ -70,14 +79,6 @@ if [[ $bc == 'megadepth_static' ]]; then
     make -f Makefile.nocurl lib-static
     popd
 fi
-
-#compile a the original, dynamic version of libBigWig
-#if [[ $bc == 'megadepth_dynamic' ]]; then
-#    pushd libBigWig
-#    make clean
-#    make -f Makefile.orig lib-shared
-#    popd
-#fi
 
 export LD_LIBRARY_PATH=./htslib:./libBigWig:$LD_LIBRARY_PATH
 
