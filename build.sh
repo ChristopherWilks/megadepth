@@ -6,6 +6,10 @@ set -ex
 build_type=$1
 bc=`perl -e '$bt="'$build_type'"; if($bt=~/static/i) { print "megadepth_static"; } else { print "megadepth_dynamic"; }'`
 
+#make sure submodules are present
+git submodule update --init --recursive
+export SUBMODULE=1
+
 ln -fs CMakeLists.txt.ci CMakeLists.txt
 
 #clear symlink main lib dirs
@@ -27,15 +31,21 @@ htslib_to_link="htslib_ci"
 if [[ -n $build_type && "$build_type" == "static" ]]; then
     htslib_to_link="htslib_static"
 fi
-if [[ ! -s htslib_ci  && "$htslib_to_link" != "htslib_static" ]] || 
-    [[ ! -s htslib_static && "$htslib_to_link" == "htslib_static" ]]; then
+
+if [[ ! -s htslib_ci/libhts.so && "$htslib_to_link" != "htslib_static" ]] || 
+    [[ ! -s htslib_static/libhts.a && "$htslib_to_link" == "htslib_static" ]]; then
     export CPPFLAGS="-I../libdeflate"
     export LDFLAGS="-L../libdeflate -ldeflate"
     if [[ "$htslib_to_link" == "htslib_static" ]]; then
         ./get_htslib.sh linux static
     else
+        if [[ -n $SUBMODULE ]]; then
+            ln -fs htslib_ci htslib
+        fi
         ./get_htslib.sh linux
-        mv htslib htslib_ci
+        if [[ -z $SUBMODULE ]]; then
+            mv htslib htslib_ci
+        fi
     fi
     export CPPFLAGS=
     export LDFLAGS=

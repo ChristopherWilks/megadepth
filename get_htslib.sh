@@ -23,17 +23,20 @@ fi
 #VER=1.9
 #VER=1.10.2
 VER=1.11
-ar=htslib-${VER}.tar.bz2
-if [[ ! -s $target_dir ]] ; then
-    curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${ar}
-    bzip2 -dc ${ar} | tar xvf - 
-    rm -f ${ar}
-    mv htslib-${VER} $target_dir
+#in case we're not using git submodules to pull dependencies
+if [[ -z $SUBMODULE ]]; then
+    ar=htslib-${VER}.tar.bz2
+    if [[ ! -s $target_dir ]] ; then
+        curl -OL https://github.com/samtools/htslib/releases/download/${VER}/${ar}
+        bzip2 -dc ${ar} | tar xvf - 
+        rm -f ${ar}
+        mv htslib-${VER} $target_dir
+    fi
 fi
 pushd $target_dir
 
-#autoheader
-#autoconf
+autoheader
+autoconf
 make clean
 
 if [[ "$compiler" == "linux" ]]; then
