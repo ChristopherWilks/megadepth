@@ -7,3 +7,6 @@
 [submodule "libdeflate"]
 	path = libdeflate_ci
 	url = https://github.com/ebiggers/libdeflate
+[submodule "zlib"]
+	path = zlib_ci
+	url = https://github.com/madler/zlib

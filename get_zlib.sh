@@ -3,12 +3,18 @@
 set -ex
 
 VER=1.2.11
-ar=zlib-${VER}.tar.gz
-wget https://www.zlib.net/${ar}
-gzip -dc ${ar} | tar xvf - 
-rm -f ${ar}
-pushd zlib-${VER}
+if [[ -z $SUBMODULE ]]; then
+    ar=zlib-${VER}.tar.gz
+    wget https://www.zlib.net/${ar}
+    gzip -dc ${ar} | tar xvf - 
+    rm -f ${ar}
+    pushd zlib-${VER}
+else 
+    pushd zlib
+fi
 ./configure
 make
 popd
-mv zlib-${VER} zlib
+if [[ -z $SUBMODULE ]]; then
+    mv zlib-${VER} zlib
+fi
