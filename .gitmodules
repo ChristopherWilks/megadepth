@@ -1,3 +1,6 @@
 [submodule "htslib"]
 	path = htslib_ci
 	url = https://github.com/samtools/htslib
+[submodule "libBigWig"]
+	path = libBigWig_ci
+	url = https://github.com/dpryan79/libBigWig

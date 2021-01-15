@@ -52,9 +52,14 @@ if [[ ! -s htslib_ci/libhts.so && "$htslib_to_link" != "htslib_static" ]] ||
 fi
 ln -fs $htslib_to_link htslib
 
-if [[ ! -s libBigWig_ci ]] ; then
+if [[ ! -s libBigWig_ci/libBigWig.so ]] ; then
+    if [[ -n $SUBMODULE ]]; then
+        ln -fs libBigWig_ci libBigWig
+    fi
     ./get_libBigWig.sh
-    mv libBigWig libBigWig_ci
+    if [[ -z $SUBMODULE ]]; then
+        mv libBigWig libBigWig_ci
+    fi
 fi
 ln -fs libBigWig_ci libBigWig
 
@@ -67,12 +72,12 @@ if [[ $bc == 'megadepth_static' ]]; then
 fi
 
 #compile a the original, dynamic version of libBigWig
-if [[ $bc == 'megadepth_dynamic' ]]; then
-    pushd libBigWig
-    make clean
-    make -f Makefile.orig lib-shared
-    popd
-fi
+#if [[ $bc == 'megadepth_dynamic' ]]; then
+#    pushd libBigWig
+#    make clean
+#    make -f Makefile.orig lib-shared
+#    popd
+#fi
 
 export LD_LIBRARY_PATH=./htslib:./libBigWig:$LD_LIBRARY_PATH
 
