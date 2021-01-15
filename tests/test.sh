@@ -38,9 +38,10 @@ diff auc.single <(fgrep "ALL_READS_ALL_BASES" tests/test.bam.mosdepth.bwtool.all
 cat test.bam.starts.tsv test.bam.ends.tsv | sort -k1,1 -k2,2n -k3,3n > test_starts_ends.tsv
 diff test_starts_ends.tsv <(sort -k1,1 -k2,2n -k3,3n tests/test.bam.read_ends.both.unique.tsv)
 
-time ./md_runner tests/test2.bam --threads 4 --junctions --prefix test2.bam > test2_run_out 2>&1
+time ./md_runner tests/test2.bam --threads 4 --junctions --all-junctions --prefix test2.bam > test2_run_out 2>&1
 
 diff tests/test2.bam.jxs.tsv test2.bam.jxs.tsv
+diff tests/test2.bam.all_jxs.tsv test2.bam.all_jxs.tsv
 
 #test just total auc
 time ./md_runner test.bam.all.bw | grep "AUC" > test.bw1.total_auc

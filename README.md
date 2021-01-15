@@ -274,13 +274,41 @@ Output is comma separated with 7 fields:
 | 7     | Base (A/T)                                                                       |
 | 8     | Count of the base in column 6                                                    |
 
-## Co-occurring Junctions
+## Junctions
 
-### `megadepth /path/to/bamfile --junctions`
+### Reporting All Junctions
+
+#### `megadepth /path/to/bamfile --all-junctions`
+
+Extracts all intron spanning alignments from the BAM and reports them, one per line.
+
+Output format:
+
+| Pos    |                                                                            Description|
+|--------|---------------------------------------------------------------------------------------|
+| 1      | Read name (for removing duplicate junction reports for overlapping read mates)        |
+| 2      | Reference/chromosome ID in the BAM file (integer)                                     |
+| 3      | Start coordinate of intron (1-based ref offset of leftmost base of intron)            |
+| 4      | End coordinate of intron (1-based ref offset of rightmost base of intron)             |
+| 5*     | Mapping strand of alignment (0 forward, 1 reverse)                                    |
+| 6      | Cigar string (useful for determining anchor lengths)                                  |
+| 7      | Is unique alignment? (0:no, 1:yes; needed for counting unique split read support)     |
+
+\* This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
+
+This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts and maximum anchor length (per junction), compatible with STAR's `SJ.out` junction file.
+
+NOTE: No junction filtering is done by Megadepth here, it will simply report every potential junction it finds in the BAM file, subject to the general alignment filters already in place (e.g. using the SAM flags to filter out umapped reads, secondary alignments, etc...).
+
+Reports to a file with suffix `.all_jxs.tsv`.
+
+### Co-occurring Junctions
+
+#### `megadepth /path/to/bamfile --junctions`
 
 Extract locally co-occurring junctions from BAM.
 
-This does not extract all potential junctions, only those for which a read (or read pair) had >= 2 junctions.
+This does not extract all potential junctions (use `--all-junctions` for that), only those for which a read (or read pair) had >= 2 junctions. This can be run instead of OR in addition to `--all-junctions`, to specifically report co-occurring junctions.  Since the output format below includes co-occurring jx's on the same line, it's potentially useful to run both.
 
 In a paired context, there must be at least 2 junctions across the 2 read mates to be output.
 
@@ -294,12 +322,14 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 | 4      | Insert length (0 if not paired)                                                       |
 | 5      | Cigar string (useful for determining anchor lengths)                                  |
 | 6      | List of junction coordinates (comma-delimited)                                        |
-| 7*     | Mate reference record ID                                                              |
-| 8*     | Mate POS field (1-based ref offset of either leftmost base)                           |
-| 9*     | Mate mapping strand (0 forward, 1 reverse)                                            |
-| 10*    | Mate insert length (0 if not paired)                                                  |
-| 11*    | Mate cigar string (useful for determining anchor lengths)                             |
-| 12*    | Mate list of junction coordinates (comma-delimited)                                   |
+| 7      | Is unique alignment? (0:no, 1:yes; needed for counting unique split read support)     |
+| 8*     | Mate reference record ID                                                              |
+| 9*     | Mate POS field (1-based ref offset of either leftmost base)                           |
+| 10*    | Mate mapping strand (0 forward, 1 reverse)                                            |
+| 11*    | Mate insert length (0 if not paired)                                                  |
+| 12*    | Mate cigar string (useful for determining anchor lengths)                             |
+| 13*    | Mate list of junction coordinates (comma-delimited)                                   |
+| 14*    | Mate is unique alignment? (0:no, 1:yes; needed for counting unique split read support)|
 
 \*optional, output if a 2nd mate is present and has the required number of junctions.
 
@@ -309,6 +339,8 @@ then try adding the argument `--long-reads` as it will enlarge the buffer used t
 This enables megadepth to have a better chance of handling really long CIGAR strings.
 
 Reports to a file with suffix `.jxs.tsv`.
+
+Similar to `--all-junctions`, no junction filtering is done by Megadepth for this option, it will simply report all co-occurring, potential junctions it finds in the BAM file.
 
 # Building
 

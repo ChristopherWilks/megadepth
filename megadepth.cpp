@@ -176,8 +176,10 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "If only the name of the BAM file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
     "  --fasta	            Path to the reference FASTA file if a CRAM file is passed as the input file (ignored otherwise)\n"
     "                       If not passed, references will be downloaded using the CRAM header.\n"
-    "  --junctions          Extract jx coordinates, strand, and anchor length, per read\n"
+    "  --junctions          Extract co-occurring jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
+    "  --all-junctions      Extract all jx coordinates, strand, and anchor length, per read for any jx\n"
+    "                       writes to a TSV file <prefix>.all_jxs.tsv\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
     "  --filter-in          Integer bitmask, any bits of which alignments need to have to be kept (similar to samtools view -f).\n"
     "  --filter-out         Integer bitmask, any bits of which alignments need to have to be skipped (similar to samtools view -F).\n"
@@ -2554,7 +2556,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             double_count = true;
     }
     FILE* jxs_file = nullptr;
+    FILE* all_jxs_file = nullptr;
     bool extract_junctions = false;
+    bool extract_all_junctions = false;
     uint32_t len = 0;
     args_list junctions;
     coords jx_coords;
@@ -2569,6 +2573,18 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         extract_junctions = true;
         process_cigar_callbacks.push_back(extract_junction);
         process_cigar_output_args.push_back(&junctions);
+    }
+    if(has_option(argv, argv+argc, "--all-junctions")) {
+        char afn[1024];
+        sprintf(afn, "%s.all_jxs.tsv", prefix);
+        all_jxs_file = fopen(afn, "w");
+        extract_all_junctions = true;
+        if(!extract_junctions) {
+            junctions.push_back(&len);
+            junctions.push_back(&jx_coords);
+            process_cigar_callbacks.push_back(extract_junction);
+            process_cigar_output_args.push_back(&junctions);
+        }
     }
     const bool require_mdz = has_option(argv, argv+argc, "--require-mdz");
     //the number of reads we actually looked at (didn't filter)
@@ -2856,9 +2872,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             //*******Run various cigar-related functions for 1 pass through the cigar string
             if(num_cigar_ops > 0)
                 process_cigar(rec->core.n_cigar, bam_get_cigar(rec), &cigar_str, &process_cigar_callbacks, &process_cigar_output_args);
-
             //*******Extract jx co-occurrences (not all junctions though)
-            if(extract_junctions) {
+            if(extract_junctions || extract_all_junctions) {
+                bool unique_aln = ((bw_unique_min_qual == 0 && rec->core.qual >= 10) || 
+                                    (bw_unique_min_qual > 0 && rec->core.qual >= bw_unique_min_qual));
                 bool paired = (c->flag & BAM_FPAIRED) != 0;
                 int32_t tlen_orig = tlen;
                 int32_t mtid = c->mtid;
@@ -2868,12 +2885,29 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 coords* cl = (coords*) junctions[1];
                 int sz = cl->size();
                 char* jx_str = nullptr;
+                char* all_jx_str = nullptr;
                 //first create jx string for any of the normal conditions
-                if(sz >= 4 || (paired && sz >= 2)) {
+                //1) if we're extracting all junctions just print individual jx's
+                if(extract_all_junctions && sz >= 2) {
+                    all_jx_str = new char[jx_str_sz];
+                    //coordinates are 1-based chromosome
+                    int ix = 0;
+                    for(int jx = 0; jx < sz; jx++) {
+                        uint32_t coord = refpos + (*cl)[jx];
+                        if(jx % 2 == 0)
+                            ix = sprintf(all_jx_str, "%s\t%s\t%d\t", qname, hdr->target_name[tid], coord+1);
+                        else {
+                            ix += sprintf(all_jx_str+ix, "%d\t%d\t%s\t%d\n", coord, (c->flag & 16) != 0, cigar_str, unique_aln);
+                            fprintf(all_jxs_file, "%s", all_jx_str);
+                        }
+                    }
+                    delete all_jx_str;
+                }
+                //2) if we're also extracting co-occurring jx's keep a joint string
+                if(extract_junctions && (sz >= 4 || (paired && sz >= 2))) {
                     jx_str = new char[jx_str_sz];
                     //coordinates are 1-based chromosome
                     int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
-                    //int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = refpos + (*cl)[jx];
                         if(jx % 2 == 0) {
@@ -2885,8 +2919,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                             ix += sprintf(jx_str+ix, "%d", coord);
                     }
                 }
+                //not paired, only care if we have 2 or more introns
+                if(!paired && extract_junctions && sz >= 4)
+                    fprintf(jxs_file, "%s\t%d\n", jx_str, unique_aln);
                 //now determine if we're 1st/2nd/single mate
-                if(paired) {
+                if(paired && extract_junctions) {
                     //first mate
                     if(tlen > 0 && sz >= 2) {
                         jx_pairs[qname] = jx_str;
@@ -2902,10 +2939,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                             mate_sz = jx_counts[qname];
                             //there must be at least 2 introns between the mates
                             if(mate_sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
-                                fprintf(jxs_file, "%s", pre_jx_str);
+                                fprintf(jxs_file, "%s\t%d", pre_jx_str, unique_aln);
                                 prev_mate_printed = true;
                             }
-                            delete pre_jx_str;
+                            if(pre_jx_str)
+                                delete pre_jx_str;
                             jx_pairs.erase(qname);
                             jx_counts.erase(qname);
                         }
@@ -2913,19 +2951,17 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         if(sz >= 4 || (mate_sz >= 2 && sz >= 2)) {
                             if(prev_mate_printed)
                                 fprintf(jxs_file, "\t");
-                            fprintf(jxs_file, "%s", jx_str);
+                            fprintf(jxs_file, "%s\t%d", jx_str, unique_aln);
                             prev_mate_printed = true;
                         }
                         if(prev_mate_printed)
                             fprintf(jxs_file,"\n");
-                        delete jx_str;
+                        if(jx_str)
+                            delete(jx_str);
                     }
                 }
-                //not paired, only care if we have 2 or more introns
-                else if(sz >= 4) {
-                    fprintf(jxs_file, "%s\n", jx_str);
-                    delete jx_str;
-                }
+                if(jx_str && !(extract_junctions && paired))
+                    delete(jx_str);
                 //reset for next alignment
                 *((uint32_t*) junctions[0]) = 0;
                 cl->clear();
@@ -2935,9 +2971,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     if(ptid != -1)
         chr_size = hdr->target_len[ptid];
     delete(cigar_str);
-    if(jxs_file) {
+    if(jxs_file)
         fclose(jxs_file);
-    }
+    if(all_jxs_file)
+        fclose(all_jxs_file);
     if(print_frag_dist) {
         if(ptid != -1)
             print_frag_distribution(frag_dist, fragdist_file);
