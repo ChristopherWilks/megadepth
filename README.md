@@ -294,7 +294,7 @@ Output format:
 | 6      | Cigar string (useful for determining anchor lengths)                                  |
 | 7      | Is unique alignment? (0:no, 1:yes; needed for counting unique split read support)     |
 
-\* This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
+\*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
 
 This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts and maximum anchor length (per junction), compatible with STAR's `SJ.out` junction file.
 
@@ -318,20 +318,22 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 |--------|---------------------------------------------------------------------------------------|
 | 1      | Reference/chromosome ID in the BAM file (integer)                                     |
 | 2      | POS field (1-based ref offset of either leftmost base)                                |
-| 3      | Mapping strand (0 forward, 1 reverse)                                                 |
+| 3      | Mapping strand (0 forward, 1 reverse)**                                               |
 | 4      | Insert length (0 if not paired)                                                       |
 | 5      | Cigar string (useful for determining anchor lengths)                                  |
 | 6      | List of junction coordinates (comma-delimited)                                        |
 | 7      | Is unique alignment? (0:no, 1:yes; needed for counting unique split read support)     |
 | 8*     | Mate reference record ID                                                              |
 | 9*     | Mate POS field (1-based ref offset of either leftmost base)                           |
-| 10*    | Mate mapping strand (0 forward, 1 reverse)                                            |
+| 10*    | Mate mapping strand (0 forward, 1 reverse)**                                          |
 | 11*    | Mate insert length (0 if not paired)                                                  |
 | 12*    | Mate cigar string (useful for determining anchor lengths)                             |
 | 13*    | Mate list of junction coordinates (comma-delimited)                                   |
 | 14*    | Mate is unique alignment? (0:no, 1:yes; needed for counting unique split read support)|
 
 \*optional, output if a 2nd mate is present and has the required number of junctions.
+
+\*\*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
 
 If you get a core dump when running on longer reads (e.g. BAM's produced by PacBio/Oxford Nanopore sequencing),
 then try adding the argument `--long-reads` as it will enlarge the buffer used to store the output junction string.
