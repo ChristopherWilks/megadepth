@@ -27,7 +27,8 @@ htslib_to_link="htslib_ci"
 if [[ -n $build_type && "$build_type" == "static" ]]; then
     htslib_to_link="htslib_static"
 fi
-if [[ ! -s htslib_ci || ! -s htslib_static ]] ; then
+if [[ ! -s htslib_ci  && "$htslib_to_link" != "htslib_static" ]] || 
+    [[ ! -s htslib_static && "$htslib_to_link" == "htslib_static" ]]; then
     export CPPFLAGS="-I../libdeflate"
     export LDFLAGS="-L../libdeflate -ldeflate"
     if [[ "$htslib_to_link" == "htslib_static" ]]; then
@@ -71,8 +72,7 @@ pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make ${bc}
 popd
-cp ${DR}/${bc} ./${bc}_ci
-ln -fs ./${bc}_ci megadepth
+cp ${DR}/${bc} ./megadepth_release
 ./megadepth --version
 rm -rf ${DR}
 
@@ -82,7 +82,6 @@ pushd ${DR}
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 make ${bc}
 popd
-cp ${DR}/${bc} ./${bc}_debug
-ln -fs ./${bc}_debug megadepth_debug
-./megadepth_debug --version
+cp ${DR}/${bc} ./megadepth_debug
+./megadepthd --version
 rm -rf ${DR}
