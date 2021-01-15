@@ -362,10 +362,12 @@ Similar to `--all-junctions`, no junction filtering is done by Megadepth for thi
 
 Before attempting to build Megadepth, we strongly suggest the user try to use one of the pre-built binaries or the Docker container provided at the top of this README.
 
-To build Megadepth on a reasonably modern x86 Linux machine (with libcurl):
+The 3 primary dependencies for the this build (htslib, libBigWig, libdeflate) are brought in via git's `submodule` system automatically.
+
+To build Megadepth on a reasonably modern x86 Linux machine (with `libcurl` and `zlib`):
 
 `build.sh`
 
-This builds a fully dynamic binary which requires that libraries for htslib and libBigWig be available in the environment where megadepth will be run (see the `megadepth` wrapper script for details).
+This builds a fully dynamic binary which requires that libraries for htslib and libBigWig be available in the environment where megadepth will be run (see the `megadepth` wrapper script for details). Both of those libraries are included in the build environment referenced via the `megadepth` wrapper script.
 
-To run, use the wrapper script `megadepth`.
+Therefore, use the wrapper script `megadepth` to run on the same system where megadepth was built.
