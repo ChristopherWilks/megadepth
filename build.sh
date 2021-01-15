@@ -15,16 +15,18 @@ ln -fs CMakeLists.txt.ci CMakeLists.txt
 #clear symlink main lib dirs
 rm -rf zlib htslib libBigWig libdeflate build-release-temp
 
-if [[ ! -s zlib_ci/libz.a ]] ; then
-    if [[ -n $SUBMODULE ]]; then
-        ln -fs zlib_ci zlib
+if [[ -n $build_type && "$build_type" == "static" ]] ; then
+    if [[ ! -s zlib_ci/libz.a ]] ; then
+        if [[ -n $SUBMODULE ]]; then
+            ln -fs zlib_ci zlib
+        fi
+        ./get_zlib.sh
+        if [[ -z $SUBMODULE ]]; then
+            mv zlib zlib_ci
+        fi
     fi
-    ./get_zlib.sh
-    if [[ -z $SUBMODULE ]]; then
-        mv zlib zlib_ci
-    fi
+    ln -fs zlib_ci zlib
 fi
-ln -fs zlib_ci zlib
 
 if [[ ! -s libdeflate_ci/libdeflate.a ]] ; then
     if [[ -n $SUBMODULE ]]; then
