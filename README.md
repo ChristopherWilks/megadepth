@@ -360,12 +360,12 @@ Similar to `--all-junctions`, no junction filtering is done by Megadepth for thi
  
 ## Building
 
-Run `build_no_container.sh` with either of these options:
+Before attempting to build Megadepth, we strongly suggest the user try to use one of the pre-built binaries or the Docker container provided at the top of this README.
 
-* `megadepth_dynamic` (default)
+To build Megadepth on a reasonably modern x86 Linux machine (with libcurl):
 
-Builds a fully dynamic binary, requires that libraries for `htslib`, `libBigWig`, `zlib`, and `libdeflate` be available in the environment where megadepth will be run
+`build.sh`
 
-* `megadepth_static`
+This builds a fully dynamic binary which requires that libraries for htslib and libBigWig be available in the environment where megadepth will be run (see the `megadepth` wrapper script for details).
 
-Builds a fully static binary, w/o remote BigWig processing support (due to no libcurl)
+To run, use the wrapper script `megadepth`.
