@@ -23,7 +23,7 @@ ln -fs zlib_ci zlib
 
 if [[ ! -s libdeflate_ci/libdeflate.a ]] ; then
     if [[ -n $SUBMODULE ]]; then
-        ln -fs libdefalte_ci libdeflate
+        ln -fs libdeflate_ci libdeflate
     fi
     ./get_libdeflate.sh
     if [[ -z $SUBMODULE ]]; then
