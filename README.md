@@ -366,7 +366,7 @@ The 3 primary dependencies for this build (htslib, libBigWig, libdeflate) are br
 
 To build Megadepth on a reasonably modern x86 Linux machine (with `libcurl` and `zlib`), run:
 
-`build.sh`
+`build_megadepth.sh`
 
 This builds a fully dynamic binary which requires that libraries for htslib and libBigWig be available in the environment where megadepth will be run.
 
