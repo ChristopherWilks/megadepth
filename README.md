@@ -4,7 +4,7 @@
 
 ![build](https://github.com/ChristopherWilks/megadepth/workflows/build/badge.svg)
 
-BigWig and BAM/CRAM related utilities.
+BigWig and BAM/CRAM related utilities [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/megadepth/README.html)
 
 We recommend use of one of the pre-compiled binaries (only x86_64):
 
