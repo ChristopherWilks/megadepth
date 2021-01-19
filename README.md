@@ -298,7 +298,9 @@ Output format:
 
 This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts, compatible with STAR's `SJ.out` junction file (sans the last column, maximum anchor length per junction).
 
-NOTE: No junction filtering is done by Megadepth here, it will simply report every potential junction it finds in the BAM file, subject to the general alignment filters already in place (e.g. using the SAM flags to filter out umapped reads, secondary alignments, etc...). If comparing with STAR's SJ.out file for the SAM BAM, be aware of that STAR will likely not do the same alignment level filtering, so the results will be different in terms of 1) number of junctions found and 2) split-read counts for a junction found in both approaches.
+NOTE: No junction filtering is done by Megadepth here, it will simply report every potential junction it finds in the BAM file, subject to the general alignment filters already in place (e.g. using the SAM flags to filter out umapped reads, secondary alignments, etc...). 
+
+If comparing with STAR's SJ.out file for the same BAM, be aware that STAR will likely not do the same alignment level filtering, so the results will be different in terms of 1) number of junctions found and 2) split-read counts for a junction found in both approaches.
 
 Reports to a file with suffix `.all_jxs.tsv`.
 
