@@ -8,9 +8,9 @@ BigWig and BAM/CRAM related utilities.
 
 We recommend use of one of the pre-compiled binaries (only x86_64):
 
-* [Linux](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.9/megadepth)*
-* [MacOS](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.9/megadepth_macos)
-* [Windows Native](https://github.com/ChristopherWilks/megadepth/releases/download/1.0.9/megadepth.exe)
+* [Linux](https://github.com/ChristopherWilks/megadepth/releases/download/1.1.0/megadepth)*
+* [MacOS](https://github.com/ChristopherWilks/megadepth/releases/download/1.1.0/megadepth_macos)
+* [Windows Native](https://github.com/ChristopherWilks/megadepth/releases/download/1.1.0/megadepth.exe)
 
 *this binary has the HTSlib, libBigWig, libcurl, libdeflate, & zlib libraries statically linked.
 
