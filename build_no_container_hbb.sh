@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -ex
-yum install cmake -yy
+#yum install cmake -yy
 
 working_dir=$(dirname $0)
 pushd $working_dir
@@ -88,3 +88,5 @@ cp ${DR}/${bc} ./${bc}_hbb_debug
 #ln -fs ./${bc}_debug megadepth_debug
 ./megadepth_hbb_debug --version
 rm -rf ${DR}
+
+ln -fs ./megadepth_hbb_debug mddebug
