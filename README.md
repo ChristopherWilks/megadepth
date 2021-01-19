@@ -296,7 +296,7 @@ Output format:
 
 \*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
 
-This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts, compatible with STAR's `SJ.out` junction file (sans the last column, maximum anchor length per junction).
+This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts, compatible with STAR's `SJ.out` junction file (sans the last column which is left blank, but would be maximum anchor length per junction if coming from STAR).
 
 NOTE: No junction filtering is done by Megadepth here, it will simply report every potential junction it finds in the BAM file, subject to the general alignment filters already in place (e.g. using the SAM flags to filter out umapped reads, secondary alignments, etc...). 
 
