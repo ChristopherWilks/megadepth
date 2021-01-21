@@ -174,7 +174,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "BAM Input:\n"
     "Extract basic junction information from the BAM, including co-occurrence\n"
     "If only the name of the BAM file is passed in with no other args, it will *only* report total AUC to STDOUT.\n"
-    "  --fasta	            Path to the reference FASTA file if a CRAM file is passed as the input file (ignored otherwise)\n"
+    "  --fasta              Path to the reference FASTA file if a CRAM file is passed as the input file (ignored otherwise)\n"
     "                       If not passed, references will be downloaded using the CRAM header.\n"
     "  --junctions          Extract co-occurring jx coordinates, strand, and anchor length, per read\n"
     "                       writes to a TSV file <prefix>.jxs.tsv\n"
@@ -183,6 +183,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --longreads          Modifies certain buffer sizes to accommodate longer reads such as PB/Oxford.\n"
     "  --filter-in          Integer bitmask, any bits of which alignments need to have to be kept (similar to samtools view -f).\n"
     "  --filter-out         Integer bitmask, any bits of which alignments need to have to be skipped (similar to samtools view -F).\n"
+    "  --add-chr-prefix     Adds \"chr\" prefix to relevant chromosomes for BAMs w/o it, pass \"human\" or \"mouse\".\n"
+    "                       Only works for human/mouse references (default: off).\n"
     "\n"
     "Non-reference summaries:\n"
     "  --alts                       Print differing from ref per-base coverages\n"
@@ -2374,6 +2376,34 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                   << ": " << std::strerror(errno) << std::endl;
         return -1;
     }
+
+    bool add_chr_prefix = has_option(argv, argv+argc, "--add-chr-prefix");
+    char** target_names = nullptr;
+    if(add_chr_prefix) {
+        target_names = new char*[hdr->n_targets]; 
+        for(int32_t i = 0; i < hdr->n_targets; i++) {
+            target_names[i] = new char[4096];
+            strcpy(target_names[i], "chr");
+        }
+        const char* cprefix = *(get_option(argv, argv+argc, "--add-chr-prefix"));
+        int num_chrs_need_prefix = 22;
+        if(strcmp(cprefix,"mouse") == 0)
+            num_chrs_need_prefix = 19;
+        for(int32_t i = 0; i < hdr->n_targets; i++) {
+            long int chr_id = strtol(hdr->target_name[i], nullptr, 10);
+            if((chr_id >= 1 && chr_id <= num_chrs_need_prefix)
+                    || strcmp(hdr->target_name[i], "X") == 0
+                    || strcmp(hdr->target_name[i], "Y") == 0
+                    || strcmp(hdr->target_name[i], "M") == 0
+                    || strcmp(hdr->target_name[i], "MT") == 0) {
+                strcat(target_names[i], hdr->target_name[i]);
+            }
+            else
+                strcpy(target_names[i], hdr->target_name[i]);
+        }
+        hdr->target_name = target_names;
+    }
+
     if(has_option(argv, argv+argc, "--head")) {
         print_header(hdr);
     }
