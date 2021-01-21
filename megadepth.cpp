@@ -2394,10 +2394,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             if((chr_id >= 1 && chr_id <= num_chrs_need_prefix)
                     || strcmp(hdr->target_name[i], "X") == 0
                     || strcmp(hdr->target_name[i], "Y") == 0
-                    || strcmp(hdr->target_name[i], "M") == 0
-                    || strcmp(hdr->target_name[i], "MT") == 0) {
+                    || strcmp(hdr->target_name[i], "M") == 0) {
                 strcat(target_names[i], hdr->target_name[i]);
             }
+            else if(strcmp(hdr->target_name[i], "MT") == 0)
+                strcpy(target_names[i], "chrM");
             else
                 strcpy(target_names[i], hdr->target_name[i]);
         }
