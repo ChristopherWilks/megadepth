@@ -4,11 +4,11 @@ set -xe
 static=$1
 
 if [[ -z $static ]]; then
-    time ./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
+    time ./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out 2>&1
 
     time ./megadepth http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 else
-    time ./megadepth tests/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_run_out 2>&1
+    time ./megadepth tests/test_noprefix.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out 2>&1
     time ./megadepth tests/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 fi
 
@@ -29,7 +29,7 @@ cut -f 1,4 test.cram.window.tsv | perl -ne 'chomp; ($c,$v)=split(/\t/,$_); $h{$c
 diff tests/test.cram.window.summed.tsv test.cram.window.summed.tsv
 
 #check --op mean with BAMs
-./megadepth tests/test.bam --annotation tests/test_exons.bed --op mean > test.bam.mean
+./megadepth tests/test.bam --annotation tests/test_exons.bed --op mean --add-chr-prefix human > test.bam.mean
 paste <(cut -f 4 test.bam.annotation.tsv) <(cut -f 2- test.bam.mean) | perl -ne 'chomp; $f=$_; ($sum,$s,$e,$m)=split(/\t/,$_); $d=($e-$s); $m2=$sum/$d; $m2=sprintf("%.2f",$m2); if($m != $m2) { print "$f\n"; $ret=1;} END { exit($ret); }'
 
 ./megadepth tests/test.bam | fgrep "ALL_READS_ALL_BASES" > auc.single

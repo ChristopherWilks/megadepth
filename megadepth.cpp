@@ -978,6 +978,7 @@ static uint64_t print_array(const char* prefix,
                             if(cidx) {
                                 if(hts_idx_push(cidx, chrms_in_cidx[tid+1]-1, last_pos, i, bgzf_tell((BGZF*) cfh), 1) < 0) {
                                     fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n",chrm,last_pos,i, tid, chrms_in_cidx[tid+1]-1);
+                                    //TODO: change this to a return
                                     exit(-1);
                                 }
                             }
@@ -1674,14 +1675,14 @@ static void sum_annotations(const uint32_t* coverages, const std::vector<T*>& an
 static bigWigFile_t* create_bigwig_file(const bam_hdr_t *hdr, const char* out_fn, const char *suffix) {
     if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(stderr, "Failed when calling bwInit with %d init val\n", BIGWIG_INIT_VAL);
-        exit(-1);
+        return nullptr;
     }
     char fn[1024] = "";
     sprintf(fn, "%s.%s", out_fn, suffix);
     bigWigFile_t* bwfp = bwOpen(fn, nullptr, "w");
     if(!bwfp) {
         fprintf(stderr, "Failed when attempting to open BigWig file %s for writing\n", fn);
-        exit(-1);
+        return nullptr;
     }
     //create with up to 10 zoom levels (though probably less in practice)
     bwCreateHdr(bwfp, 10);
@@ -2276,6 +2277,7 @@ public:
         sam_itr = sam_itr_regarray(bidx, bhdr, amap_ptr, amap_count);
         if(!sam_itr) {
             fprintf(stderr,"failed to create SAM file iterator, exiting\n");
+            //TODO: change this to a return
             exit(-1);
         }
         //delete amap;
@@ -2386,6 +2388,10 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
             strcpy(target_names[i], "chr");
         }
         const char* cprefix = *(get_option(argv, argv+argc, "--add-chr-prefix"));
+        if(!cprefix || (strcmp(cprefix,"human") != 0 && strcmp(cprefix,"mouse") != 0)) {
+            fprintf(stderr, "bad (or no) argument passed to --add-chr-prefix, should be either \"human\" or \"mouse\"\n");
+            return -1;
+        }
         int num_chrs_need_prefix = 22;
         if(strcmp(cprefix,"mouse") == 0)
             num_chrs_need_prefix = 19;
@@ -2499,8 +2505,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
         compute_coverage = true;
         chr_size = get_longest_target_size(hdr);
         coverages.reset(new uint32_t[chr_size]);
-        if(bigwig_opt)
+        if(bigwig_opt) {
             bwfp = create_bigwig_file(hdr, prefix,"all.bw");
+            if(!bwfp)
+                return -1;
+        }
         if(unique) {
             if(annotation_opt && window_size == 0) {
                 uafp = stdout;
@@ -2517,8 +2526,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                     }
                 }
             }
-            if(bigwig_opt)
+            if(bigwig_opt) {
                 ubwfp = create_bigwig_file(hdr, prefix, "unique.bw");
+                if(!ubwfp)
+                    return -1;
+            }
             bw_unique_min_qual = atoi(*(get_option(argv, argv+argc, "--min-unique-qual")));
             unique_coverages.reset(new uint32_t[chr_size]);
         }
@@ -3057,7 +3069,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                     if(cidx) {
                                         if(hts_idx_push(cidx, chrms_in_cidx[ci+1]-1, 0, hdr->target_len[ci], bgzf_tell(gcov_fh), 1) < 0) {
                                             fprintf(stderr,"error writing line in index at coordinates: %s:%u-%u, tid: %d idx tid: %d exiting\n", hdr->target_name[ci], 0, hdr->target_len[ci], ci, chrms_in_cidx[ci+1]-1);
-                                            exit(-1);
+                                            return -1;
                                         }
                                     }
                                 }
@@ -3222,6 +3234,11 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
         window_size = strtol(afile, nullptr, 10);
         if(window_size == 0) {
             afp = fopen(afile, "r");
+            if(!afp) {
+                fprintf(stderr, 
+                        "bad argument to --annotation: either the path \"%s\" doesn't exist or cannot be read, terminating\n", afile);
+                return -1;
+            }
             err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
             fclose(afp);
             assert(!annotations.empty());
