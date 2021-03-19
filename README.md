@@ -19,6 +19,7 @@ Megadepth is also available under [R/Bioconductor](http://www.bioconductor.org/p
 If none of those options work, the a Docker image and build instructions are described at the end of this README.
 
 If you find Megadepth useful, please cite the publication:
+
 `Wilks, C, Ahmed, O, Baker, DN, Zhang, D, Collado-Torres, L, Langmead, B (2021). Megadepth: efficient coverage quantification for BigWigs and BAMs. Bioinformatics`
 
 [Releases prior to 1.0.2 used the previous name "bamcount"]
