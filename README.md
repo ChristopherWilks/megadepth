@@ -16,19 +16,10 @@ We recommend use of one of the pre-compiled binaries (only x86_64):
 
 Megadepth is also available under [R/Bioconductor](http://www.bioconductor.org/packages/release/bioc/html/megadepth.html)
 
-Additionally, there is a Docker image that can be used to run `megadepth`:
+If none of those options work, the a Docker image and build instructions are described at the end of this README.
 
-https://quay.io/repository/broadsword/megadepth?tab=tags
-
-You'll probably want to map in a directory on the host system into the container via the `-v` option so you can pass an annotation file in and get output back:
-
-```
-docker run -v `pwd`:/data <image_id> </data/path_or_URL/to/input/BAM_or_BigWig> --annotation /data/<annotation>.bed --prefix /data/output_file_prefix
-```
-
-Currently, `libcurl` throws a warning about version information, this can be ignored.
-
-Finally, if none of those options work, the build instructions are at the end of this README.
+If you find Megadepth useful, please cite the publication:
+`Wilks, C, Ahmed, O, Baker, DN, Zhang, D, Collado-Torres, L, Langmead, B (2021). Megadepth: efficient coverage quantification for BigWigs and BAMs. Bioinformatics`
 
 [Releases prior to 1.0.2 used the previous name "bamcount"]
 
@@ -345,6 +336,19 @@ This enables megadepth to have a better chance of handling really long CIGAR str
 Reports to a file with suffix `.jxs.tsv`.
 
 Similar to `--all-junctions`, no junction filtering is done by Megadepth for this option, it will simply report all co-occurring, potential junctions it finds in the BAM file.
+
+# Docker 
+Additionally, there is a Docker image that can be used to run `megadepth`:
+
+https://quay.io/repository/broadsword/megadepth?tab=tags
+
+For running under Docker, you'll probably want to map in a directory on the host system into the container via the `-v` option so you can pass an annotation file in and get output back:
+
+```
+docker run -v `pwd`:/data <image_id> </data/path_or_URL/to/input/BAM_or_BigWig> --annotation /data/<annotation>.bed --prefix /data/output_file_prefix
+```
+
+Currently, `libcurl` throws a warning about version information, this can be ignored.
 
 # Building
 
