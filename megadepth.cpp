@@ -797,10 +797,11 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                 refpos += run;
                 break;
             }
-            case 'H':
-            case 'P': { break; }
+            case BAM_CHARD_CLIP:
+            case BAM_CPAD: { break; }
             default: {
                 std::stringstream ss;
+                //ss << "No such CIGAR operation as \"" << op << "\"" << n_cigar << " " << run << " " << k;
                 ss << "No such CIGAR operation as \"" << op << "\"";
                 throw std::runtime_error(ss.str());
             }
