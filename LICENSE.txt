@@ -1,7 +1,7 @@
 The MIT License
 
-Copyright (c) 2018-     Christopher Wilks <cwilks3@jhu.edu> and Ben Langmead
-                        <langmea@cs.jhu.edu>
+Copyright (c) 2018-     Christopher Wilks <broadsword@gmail.com>
+                        and Ben Langmead <langmea@cs.jhu.edu>
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
