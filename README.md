@@ -329,7 +329,9 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 
 \*\*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
 
-If you get a core dump when running on longer reads (e.g. BAM's produced by PacBio/Oxford Nanopore sequencing),
+If you get a core dump when running on longer reads (e.g. BAM's produced by PacBio/Oxford Nanopore sequencing), or something like this abort message:
+```*** Error in `megadepth': free(): invalid next size (normal): 0x0000000001d30780 ***```
+
 then try adding the argument `--long-reads` as it will enlarge the buffer used to store the output junction string.
 
 This enables megadepth to have a better chance of handling really long CIGAR strings.
