@@ -126,7 +126,7 @@ static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 static const int OUT_BUFF_SZ=4000000;
 static const int COORD_STR_LEN=34;
 
-enum Op { csum, cmean, cmin, cmax };
+enum Op { csum, cmean, cmin, cmax, cmatrix, cbad };
 
 static const void print_version() {
     std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
@@ -210,7 +210,9 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Requires libBigWig.\n"
     "  --annotation <BED|window_size>   Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end). Or this can specify a contiguous region size in bp.\n"
-    "  --op <sum[default], mean>     Statistic to run on the intervals provided by --annotation\n"
+    "  --op <sum[default], mean, matrix(BigWig only)>     Statistic to run on the intervals provided by --annotation\n"
+    "  --upstream <int>     Number of bases before center of annotated region (only for --op matrix)\n"
+    "  --downstream <int>   Number of bases after center of annotated region (only for --op matrix)\n"
     "  --no-index           If using --annotation, skip the use of the BAM index (BAI) for pulling out regions.\n"
     "                       Setting this can be faster if doing windows across the whole genome.\n"
     "                       This will be turned on automatically if a window size is passed to --annotation.\n"
@@ -1618,7 +1620,7 @@ using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
-static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, int upstream=0, int downstream=0) {
     char* tok = strtok(line, delim);
     int i = 0;
     char* chrm = nullptr;
@@ -1641,6 +1643,13 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     //if we need to keep the order, then we'll store values here
     const int alen = keep_order?4:2;
     T* coords = new T[alen];
+    if(upstream > 0 || downstream > 0) {
+        int32_t mid = floor((end - start)/2) + start;
+        start = mid - upstream;
+        if(start <= 0)
+            start = 0;
+        end = mid + downstream; 
+    } 
     coords[0] = start;
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
@@ -1654,14 +1663,14 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 }
 
 template <typename T>
-static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations) {
+static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations, int upstream=0, int downstream=0) {
     char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
     int err = 0;
     while(bytes_read != -1) {
-        err = process_region_line(line, "\t", amap, chrm_order, keep_order);
+        err = process_region_line(line, "\t", amap, chrm_order, keep_order, upstream=upstream, downstream=downstream);
         if(err) {
             std::cerr << "Error: " << err << " in process_region_line.\n";
             break;
@@ -1899,6 +1908,13 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 std::fill(local_vals, local_vals + asz, 0.);
             }
             //loop through annotation intervals as outer loop
+            char* matrix_buf = nullptr;
+            int SIZE_OF_MATRIX_BUF=1024*1024;
+            int CHAR_LEN_FACTOR = 12;
+            int current_matrix_buf_size = SIZE_OF_MATRIX_BUF;
+            if(op == cmatrix) {
+                matrix_buf = new char[SIZE_OF_MATRIX_BUF];
+            }
             for(z = 0; z < asz; z++) {
                 const auto &az = annotations[z];
                 double sum = 0;
@@ -1906,7 +1922,16 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 double max = 0;
                 T start = az[0];
                 T ostart = start;
+                //TODO: if op==cmatrix check for overrun beyond the length of the chromosome for end here
                 T end = az[1];
+                long clength = (start - end)+1;
+                long matrix_idx = 0;
+                if(op == cmatrix && clength*CHAR_LEN_FACTOR > current_matrix_buf_size) {
+                    delete(matrix_buf);
+                    matrix_buf = new char[10*current_matrix_buf_size];
+                    current_matrix_buf_size *= 10;
+                }
+
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
                 while(start < iter->intervals->start[last_j])
@@ -1926,6 +1951,10 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                             case cmean:
                                 for(k = start; k < last_k; k++)
                                     sum += iter->intervals->value[j];
+                                break;
+                            case cmatrix:
+                                for(k = start; k < last_k; k++)
+                                    matrix_idx+=sprintf(matrix_buf+matrix_idx,"\t%.2f",iter->intervals->value[j]);
                                 break;
                             case cmin:
                                 for(k = start; k < last_k; k++)
@@ -1961,12 +1990,18 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     case cmax:
                         value = max;
                         break;
+                    case cmatrix:;
                     case csum:; // do nothing
                 }
                 //not trying to keep the order in the BED file, just print them as we find them
-                if(keep_order_idx == -1) {
-                    int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
-                    (*outputFunc)(afp, buf, buf_len);
+                if(keep_order_idx == -1 || op == cmatrix) {
+                    if(op == cmatrix) {
+                        fprintf(afp, "%s\t%u\t%u%s\n", fp->cl->chrom[tid], (long) ostart, (long) end, matrix_buf);
+                    }
+                    else {
+                        int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                        (*outputFunc)(afp, buf, buf_len);
+                    }
                 }
                 else if(store_local)
                     local_vals[z] = value;
@@ -2145,13 +2180,20 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         delete mitr.second;*/
 }
 
-Op get_operation(const char* opstr) {
+Op get_operation(const char* opstr, bool is_bam=false) {
     if(strcmp(opstr, "mean") == 0)
         return cmean;
     if(strcmp(opstr, "min") == 0)
         return cmin;
     if(strcmp(opstr, "max") == 0)
         return cmax;
+    if(strcmp(opstr, "matrix") == 0) {
+        if(is_bam) {
+            fprintf(stderr,"trying to run --op matrix on a BAM, not allowed\n");
+            return cbad;
+        }
+        return cmatrix;
+    }
     return csum;
 }
 
@@ -3278,7 +3320,14 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
                         "bad argument to --annotation: either the path \"%s\" doesn't exist or cannot be read, terminating\n", afile);
                 return -1;
             }
-            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
+            int upstream = 0;
+            int downstream = 0;
+            if(op == cmatrix && has_option(argv, argv+argc, "--upstream"))
+                upstream = atoi(*(get_option(argv, argv+argc, "--upstream")));
+            if(op == cmatrix && has_option(argv, argv+argc, "--downstream"))
+                downstream = atoi(*(get_option(argv, argv+argc, "--downstream")));
+
+            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, upstream=upstream, downstream=downstream);
             fclose(afp);
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
@@ -3405,7 +3454,11 @@ int main(int argc, const char** argv) {
     Op op = csum;
     if(has_option(argv, argv+argc, "--op")) {
         const char* opstr = *(get_option(argv, argv+argc, "--op"));
-        op = get_operation(opstr);
+        op = get_operation(opstr, is_bam);
+        if(op == cbad) {
+            fprintf(stderr,"bad operation, quitting\n");
+            exit(-1);
+        }
     }
     std::ios::sync_with_stdio(false);
     if(!is_bam || op == cmean)
