@@ -92,6 +92,10 @@ fi
 time ./megadepth test.bam.all.bw --sums-only --annotation tests/testbw2.bed --prefix test.bam.bw2 > test.bam.bw2.annotation.tsv
 diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 
+./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam.names --threads 4 --alts --write-names --include-softclip --only-polya --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out2 2>&1
+diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
+
+
 #clean up any previous test files
 rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean test.cram.coverage.tsv test_cram_run_out test.cram.coverage.tsv.summed
 
