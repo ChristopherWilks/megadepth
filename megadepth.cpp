@@ -1872,30 +1872,33 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 T end = az[1];
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
-                while(start < iter->intervals->start[last_j])
+                while(start < iter->intervals->start[last_j] && last_j > 0)
                     last_j--;
                 for(j = last_j; j < num_intervals; j++)
                 {
                     istart = iter->intervals->start[j];
                     iend = iter->intervals->end[j];
-                    //is our start overlapping?
-                    if(start >= istart && start < iend)
+                    //is our start and/or end overlapping?
+                    if((start >= istart && start < iend) ||
+                            (end > istart && end <= iend) ||
+                            (start < istart && end > iend))
                     {
+                        long first_k = start < istart ? istart : start;
                         long last_k = end > iend ? iend : end;
                         //stat mode
                         //avoid having if's in the inner loops as much as possible
                         switch(op) {
                             case csum:
                             case cmean:
-                                for(k = start; k < last_k; k++)
+                                for(k = first_k; k < last_k; k++)
                                     sum += iter->intervals->value[j];
                                 break;
                             case cmin:
-                                for(k = start; k < last_k; k++)
+                                for(k = first_k; k < last_k; k++)
                                     min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
                                 break;
                             case cmax:
-                                for(k = start; k < last_k; k++)
+                                for(k = first_k; k < last_k; k++)
                                     max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
                                 break;
                         }
@@ -1909,6 +1912,8 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     }
                 }
                 last_j = j;
+                if(last_j == num_intervals)
+                    last_j--;
                 if(op == csum)
                     (*annotated_auc) += sum;
                 //0-based start

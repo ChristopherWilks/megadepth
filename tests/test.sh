@@ -95,6 +95,9 @@ diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 ./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam.names --threads 4 --alts --write-names --include-softclip --only-polya --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out2 2>&1
 diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
 
+#test multiple overlap types for BigWig annotation processing
+./megadepth tests/bw.all_overlap_types.test_input.bw --annotation gh_bug_9.bed --auc > test.bw.all_overlap_types.test_output.bed
+diff test.bw.all_overlap_types.test_output.bed tests/bw.all_overlap_types.test_output.bed
 
 #clean up any previous test files
 rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean test.cram.coverage.tsv test_cram_run_out test.cram.coverage.tsv.summed
