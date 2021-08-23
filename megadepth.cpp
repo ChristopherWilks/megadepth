@@ -126,7 +126,7 @@ static double SOFTCLIP_POLYA_RATIO_MIN=0.8;
 static const int OUT_BUFF_SZ=4000000;
 static const int COORD_STR_LEN=34;
 
-enum Op { csum, cmean, cmin, cmax, cmatrix, cbad };
+enum Op { csum, cmean, cmin, cmax };
 
 static const void print_version() {
     std::cout << "megadepth " << std::string(MEGADEPTH_VERSION) << std::endl;
@@ -194,9 +194,9 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --only-polya                 If --include-softclip, only print softclips which are mostly A's or T's\n"
     "  --include-n                  Print mismatch records when mismatched read base is N\n"
     "  --print-qual                 Print quality values for mismatched bases\n"
+    "  --delta                      Print POS field as +/- delta from previous\n"
     "  --require-mdz                Quit with error unless MD:Z field exists everywhere it's\n"
     "                               expected\n"
-    "  --write-names                Write the contig/chromosome names (e.g. \"chr10\"), rather than their internal BAM IDs\n"
     "  --head                       Print sequence names and lengths in SAM/BAM header\n"
     "\n"
     "Coverage and quantification:\n"
@@ -210,9 +210,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "                       Requires libBigWig.\n"
     "  --annotation <BED|window_size>   Path to BED file containing list of regions to sum coverage over\n"
     "                       (tab-delimited: chrm,start,end). Or this can specify a contiguous region size in bp.\n"
-    "  --op <sum[default], mean, matrix(BigWig only)>     Statistic to run on the intervals provided by --annotation\n"
-    "  --upstream <int>     Number of bases before center of annotated region (only for --op matrix)\n"
-    "  --downstream <int>   Number of bases after center of annotated region (only for --op matrix)\n"
+    "  --op <sum[default], mean>     Statistic to run on the intervals provided by --annotation\n"
     "  --no-index           If using --annotation, skip the use of the BAM index (BAI) for pulling out regions.\n"
     "                       Setting this can be faster if doing windows across the whole genome.\n"
     "                       This will be turned on automatically if a window size is passed to --annotation.\n"
@@ -502,16 +500,12 @@ struct CigarOp {
     //std::ostream seq;
     //std::ostream quals;
     int32_t del_len;
-    const char* chrname;
 };
 
 typedef hashmap<std::string, std::vector<CigarOp>> read2cigarops;
 //only applies to X,D, and I ops (not S [softclipping])
-static void emit_alt_record(std::fstream& fout, CigarOp& cig, const char* qname, const char* chrname, bool write_contig_names = false) {
-    if(write_contig_names)
-        fout << cig.chrname << ',' << cig.refpos << ',' << cig.op << ',';
-    else
-        fout << cig.refidx << ',' << cig.refpos << ',' << cig.op << ',';
+static void emit_alt_record(std::fstream& fout, CigarOp& cig, const char* qname) {
+    fout << cig.refidx << ',' << cig.refpos << ',' << cig.op << ',';
     if(cig.op == 'D')
         fout << cig.del_len;
     else
@@ -526,13 +520,13 @@ static void emit_alt_record(std::fstream& fout, CigarOp& cig, const char* qname,
     fout << '\n';
 }
 
-static void check_saved_ops(std::fstream& fout, std::vector<CigarOp>* saved_ops, std::vector<Coordinate>* overlapping_coords, char* real_qname, const char* chrname, bool check_for_overlaps_flag = true, bool write_contig_names = false) {
+static void check_saved_ops(std::fstream& fout, std::vector<CigarOp>* saved_ops, std::vector<Coordinate>* overlapping_coords, char* real_qname, bool check_for_overlaps_flag = true) {
     int coord_idx = 0;
     for(auto it : *saved_ops) {
         char* qname = emptystr;
         if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, it.refpos))
             qname = real_qname; 
-        emit_alt_record(fout, it, qname, chrname, write_contig_names);
+        emit_alt_record(fout, it, qname);
     } 
 }
 
@@ -543,18 +537,17 @@ static bool output_from_cigar_mdz(
         uint64_t* total_softclip_count,
         char* real_qname,
         std::vector<Coordinate>* overlapping_coords,
-        const char* chrname,
         std::vector<CigarOp>* saved_ops = nullptr,
         bool save_ops = false,
         bool print_qual = false,
         bool include_sc = false,
         bool only_polya_sc = false,
         bool include_n_mms = false,
-        bool write_contig_names = false)
+        bool delta = false)
 {
     //bool check_for_saved_ops = saved_ops->size() > 0;
     if(saved_ops->size() > 0)
-        check_saved_ops(fout, saved_ops, overlapping_coords, real_qname, chrname, write_contig_names=write_contig_names);
+        check_saved_ops(fout, saved_ops, overlapping_coords, real_qname);
     uint8_t *seq = bam_get_seq(rec);
     uint8_t *qual = bam_get_qual(rec);
     // If QUAL field is *. this array is just a bunch of 255s
@@ -600,16 +593,12 @@ static bool output_from_cigar_mdz(
                             if(print_qual)
                                 cig.quals = cstr_substring(qual, seq_off, (size_t)run_comb);
                             cig.del_len = 0;
-                            cig.chrname = chrname;
                             saved_ops->push_back(cig);
                         }
                         else {
                             if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                                 qname = real_qname; 
-                            if(write_contig_names)
-                                fout << chrname << ',' << ref_off << ",X,";
-                            else
-                                fout << rec->core.tid << ',' << ref_off << ",X,";
+                            fout << rec->core.tid << ',' << ref_off << ",X,";
                             seq_substring(fout, seq, seq_off, (size_t)run_comb) << ',' << qname << ',';
                             if(print_qual)
                                 cstr_substring(fout, qual, seq_off, (size_t)run_comb);
@@ -637,16 +626,12 @@ static bool output_from_cigar_mdz(
                 cig.seq = seq_substring(seq, seq_off, (size_t)run);
                 cig.quals = nullptr;
                 cig.del_len = 0;
-                cig.chrname = chrname;
                 saved_ops->push_back(cig);
             }
             else {
                 if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                     qname = real_qname; 
-                if(write_contig_names)
-                    fout << chrname << ',' << ref_off << ",I,";
-                else
-                    fout << rec->core.tid << ',' << ref_off << ",I,";
+                fout << rec->core.tid << ',' << ref_off << ",I,";
                 seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << ",\n";
                 found = true;
             }
@@ -664,10 +649,7 @@ static bool output_from_cigar_mdz(
                         char* qname = emptystr; 
                         /*if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                             qname = real_qname;*/
-                        if(write_contig_names)
-                            fout << chrname << ',' << ref_off << ",S,";
-                        else
-                            fout << rec->core.tid << ',' << ref_off << ",S,";
+                        fout << rec->core.tid << ',' << ref_off << ",S,";
                         fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << '\n';
                         found = true;
                     }
@@ -676,10 +658,7 @@ static bool output_from_cigar_mdz(
                     char* qname = emptystr; 
                     /*if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                         qname = real_qname;*/
-                    if(write_contig_names)
-                        fout << chrname << ',' << ref_off << ",S,";
-                    else
-                        fout << rec->core.tid << ',' << ref_off << ",S,";
+                    fout << rec->core.tid << ',' << ref_off << ",S,";
                     seq_substring(fout, seq, seq_off, (size_t)run)  << ',' << qname << ",\n";
                     found = true;
                 }
@@ -699,16 +678,12 @@ static bool output_from_cigar_mdz(
                 cig.seq = nullptr;
                 cig.quals = nullptr;
                 cig.del_len = run;
-                cig.chrname = chrname;
                 saved_ops->push_back(cig);
             }
             else {
                 if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, ref_off))
                     qname = real_qname; 
-                if(write_contig_names)
-                    fout << chrname << ',' << ref_off << ",D," << run << ',' << qname << ",\n";
-                else
-                    fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << ",\n";
+                fout << rec->core.tid << ',' << ref_off << ",D," << run << ',' << qname << ",\n";
                 found = true;
             }
             ref_off += run;
@@ -726,9 +701,9 @@ static bool output_from_cigar_mdz(
     return found;
 }
 
-static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc, char* real_qname, std::vector<Coordinate>* overlapping_coords, const char* chrname, std::vector<CigarOp>* saved_ops = nullptr, bool save_ops = false, bool write_contig_names = false) {
+static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* total_softclip_count, const bool include_sc, const bool only_polya_sc, char* real_qname, std::vector<Coordinate>* overlapping_coords, std::vector<CigarOp>* saved_ops = nullptr, bool save_ops = false) {
     if(saved_ops->size() > 0)
-        check_saved_ops(fout, saved_ops, overlapping_coords, real_qname, chrname, write_contig_names=write_contig_names);
+        check_saved_ops(fout, saved_ops, overlapping_coords, real_qname);
     uint8_t *seq = bam_get_seq(rec);
     uint32_t *cigar = bam_get_cigar(rec);
     uint32_t n_cigar = rec->core.n_cigar;
@@ -753,16 +728,12 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                     cig.seq = nullptr;
                     cig.quals = nullptr;
                     cig.del_len = run;
-                    cig.chrname = chrname;
                     saved_ops->push_back(cig);
                 }
                 else {
                     if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
                         qname = real_qname; 
-                    if(write_contig_names)
-                        fout << chrname << ',' << refpos << ",D," << run << "," << qname << ",\n";
-                    else
-                        fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << ",\n";
+                    fout << rec->core.tid << ',' << refpos << ",D," << run << "," << qname << ",\n";
                 }
                 refpos += run;
                 break;
@@ -778,20 +749,14 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                         int count_polya = polya_check(seq, (size_t)seqpos, (size_t)run, &c);
                         if(count_polya != -1 && run >= SOFTCLIP_POLYA_TOTAL_COUNT_MIN) {
                             char* qname = emptystr; 
-                            if(write_contig_names)
-                                fout << chrname << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                            else
-                                fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                            fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                             fout << run << ',' << qname << ',' << direction << ',' << c << ',' << count_polya << '\n';
                             found = true;
                         }
                     }
                     else {
                         char* qname = emptystr; 
-                        if(write_contig_names)
-                            fout << chrname << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                        else
-                            fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                        fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                         seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << ",\n";
                         found = true;
                     }
@@ -809,16 +774,12 @@ static bool output_from_cigar(const bam1_t *rec, std::fstream& fout, uint64_t* t
                     cig.seq = seq_substring(seq, (size_t)seqpos, (size_t)run);
                     cig.quals = nullptr;
                     cig.del_len = 0;
-                    cig.chrname = chrname;
                     saved_ops->push_back(cig);
                 }
                 else {
                     if(check_for_overlaps_flag && check_for_overlap(overlapping_coords, coord_idx, refpos))
                         qname = real_qname; 
-                    if(write_contig_names)
-                        fout << chrname << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
-                    else
-                        fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
+                    fout << rec->core.tid << ',' << refpos << ',' << BAM_CIGAR_STR[op] << ',';
                     seq_substring(fout, seq, (size_t)seqpos, (size_t)run) << ',' << qname << ",\n";
                     found = true;
                 }
@@ -1620,7 +1581,7 @@ using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
-static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, int upstream=0, int downstream=0) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
     char* tok = strtok(line, delim);
     int i = 0;
     char* chrm = nullptr;
@@ -1643,13 +1604,6 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     //if we need to keep the order, then we'll store values here
     const int alen = keep_order?4:2;
     T* coords = new T[alen];
-    if(upstream > 0 || downstream > 0) {
-        int32_t mid = floor((end - start)/2) + start;
-        start = mid - upstream;
-        if(start <= 0)
-            start = 0;
-        end = mid + downstream; 
-    } 
     coords[0] = start;
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
@@ -1663,14 +1617,14 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 }
 
 template <typename T>
-static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations, int upstream=0, int downstream=0) {
+static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations) {
     char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
     int err = 0;
     while(bytes_read != -1) {
-        err = process_region_line(line, "\t", amap, chrm_order, keep_order, upstream=upstream, downstream=downstream);
+        err = process_region_line(line, "\t", amap, chrm_order, keep_order);
         if(err) {
             std::cerr << "Error: " << err << " in process_region_line.\n";
             break;
@@ -1908,13 +1862,6 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 std::fill(local_vals, local_vals + asz, 0.);
             }
             //loop through annotation intervals as outer loop
-            char* matrix_buf = nullptr;
-            int SIZE_OF_MATRIX_BUF=1024*1024;
-            int CHAR_LEN_FACTOR = 12;
-            int current_matrix_buf_size = SIZE_OF_MATRIX_BUF;
-            if(op == cmatrix) {
-                matrix_buf = new char[SIZE_OF_MATRIX_BUF];
-            }
             for(z = 0; z < asz; z++) {
                 const auto &az = annotations[z];
                 double sum = 0;
@@ -1922,16 +1869,7 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 double max = 0;
                 T start = az[0];
                 T ostart = start;
-                //TODO: if op==cmatrix check for overrun beyond the length of the chromosome for end here
                 T end = az[1];
-                long clength = (start - end)+1;
-                long matrix_idx = 0;
-                if(op == cmatrix && clength*CHAR_LEN_FACTOR > current_matrix_buf_size) {
-                    delete(matrix_buf);
-                    matrix_buf = new char[10*current_matrix_buf_size];
-                    current_matrix_buf_size *= 10;
-                }
-
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
                 while(start < iter->intervals->start[last_j])
@@ -1951,10 +1889,6 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                             case cmean:
                                 for(k = start; k < last_k; k++)
                                     sum += iter->intervals->value[j];
-                                break;
-                            case cmatrix:
-                                for(k = start; k < last_k; k++)
-                                    matrix_idx+=sprintf(matrix_buf+matrix_idx,"\t%.2f",iter->intervals->value[j]);
                                 break;
                             case cmin:
                                 for(k = start; k < last_k; k++)
@@ -1990,18 +1924,12 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     case cmax:
                         value = max;
                         break;
-                    case cmatrix:;
                     case csum:; // do nothing
                 }
                 //not trying to keep the order in the BED file, just print them as we find them
-                if(keep_order_idx == -1 || op == cmatrix) {
-                    if(op == cmatrix) {
-                        fprintf(afp, "%s\t%u\t%u%s\n", fp->cl->chrom[tid], (long) ostart, (long) end, matrix_buf);
-                    }
-                    else {
-                        int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
-                        (*outputFunc)(afp, buf, buf_len);
-                    }
+                if(keep_order_idx == -1) {
+                    int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                    (*outputFunc)(afp, buf, buf_len);
                 }
                 else if(store_local)
                     local_vals[z] = value;
@@ -2180,20 +2108,13 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         delete mitr.second;*/
 }
 
-Op get_operation(const char* opstr, bool is_bam=false) {
+Op get_operation(const char* opstr) {
     if(strcmp(opstr, "mean") == 0)
         return cmean;
     if(strcmp(opstr, "min") == 0)
         return cmin;
     if(strcmp(opstr, "max") == 0)
         return cmax;
-    if(strcmp(opstr, "matrix") == 0) {
-        if(is_bam) {
-            fprintf(stderr,"trying to run --op matrix on a BAM, not allowed\n");
-            return cbad;
-        }
-        return cmatrix;
-    }
     return csum;
 }
 
@@ -2664,7 +2585,6 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     const bool echo_sam = has_option(argv, argv+argc, "--echo-sam");
     std::fstream alts_file;
     bool compute_alts = false;
-    bool write_contig_names = has_option(argv, argv+argc, "--write-names");
     if(has_option(argv, argv+argc, "--alts")) {
         char afn[1024];
         sprintf(afn, "%s.alts.tsv", prefix);
@@ -2974,14 +2894,14 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         ss << "No MD:Z extra field for aligned read \"" << hdr->target_name[c->tid] << "\"";
                         throw std::runtime_error(ss.str());
                     }
-                    track_qname = output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc, qname, &overlapping_coords, hdr->target_name[c->tid], &saved_ops, save_ops, write_contig_names=write_contig_names); // just use CIGAR
+                    track_qname = output_from_cigar(rec, alts_file, &total_softclip_count, include_sc, only_polya_sc, qname, &overlapping_coords, &saved_ops, save_ops); // just use CIGAR
                 } else {
                     mdzbuf.clear();
                     parse_mdz(mdz + 1, mdzbuf); // skip type character at beginning
                     track_qname = output_from_cigar_mdz(
                             rec, mdzbuf, alts_file, &total_softclip_count, qname, 
-                            &overlapping_coords, hdr->target_name[c->tid], &saved_ops, save_ops = save_ops, 
-                            print_qual, include_sc, only_polya_sc, include_n_mms, write_contig_names=write_contig_names); // use CIGAR and MD:Z
+                            &overlapping_coords, &saved_ops, save_ops = save_ops, 
+                            print_qual, include_sc, only_polya_sc, include_n_mms); // use CIGAR and MD:Z
                 }
                 if(save_ops && first_mate_saved_ops) 
                     first_mate_saved_ops->emplace(tn, saved_ops);
@@ -3320,14 +3240,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
                         "bad argument to --annotation: either the path \"%s\" doesn't exist or cannot be read, terminating\n", afile);
                 return -1;
             }
-            int upstream = 0;
-            int downstream = 0;
-            if(op == cmatrix && has_option(argv, argv+argc, "--upstream"))
-                upstream = atoi(*(get_option(argv, argv+argc, "--upstream")));
-            if(op == cmatrix && has_option(argv, argv+argc, "--downstream"))
-                downstream = atoi(*(get_option(argv, argv+argc, "--downstream")));
-
-            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, upstream=upstream, downstream=downstream);
+            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
             fclose(afp);
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
@@ -3454,11 +3367,7 @@ int main(int argc, const char** argv) {
     Op op = csum;
     if(has_option(argv, argv+argc, "--op")) {
         const char* opstr = *(get_option(argv, argv+argc, "--op"));
-        op = get_operation(opstr, is_bam);
-        if(op == cbad) {
-            fprintf(stderr,"bad operation, quitting\n");
-            exit(-1);
-        }
+        op = get_operation(opstr);
     }
     std::ios::sync_with_stdio(false);
     if(!is_bam || op == cmean)
