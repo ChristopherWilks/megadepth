@@ -1,0 +1,6 @@
+chr1	121378685	121378704	no_overlap
+chr1	121478687	121478800	annotation_overhangs_right_side
+chr1	121479000	121481992	annotation_overhangs_left_side
+chr1	121480203	121480221	exact_match
+chr1	121481830	121482451	annotation_strictly_contains_target
+chr1	121483258	121483259	annotation_fully_contained_within_target
