@@ -96,7 +96,7 @@ diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
 
 #test multiple overlap types for BigWig annotation processing
-./megadepth tests/bw.all_overlap_types.test_input.bw --annotation gh_bug_9.bed --auc > test.bw.all_overlap_types.test_output.bed
+./megadepth tests/bw.all_overlap_types.test_input.bw --annotation tests/gh_bug_9.bed --auc > test.bw.all_overlap_types.test_output.bed
 diff test.bw.all_overlap_types.test_output.bed tests/bw.all_overlap_types.test_output.bed
 
 #clean up any previous test files
