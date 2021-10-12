@@ -5,6 +5,9 @@ set -x -o pipefail -o errexit -o nounset
 #1) splice junction strand is *not* determined (always 0 in column 4)
 #2) splice junction motifs are *not* determineda (always 0 in column 5)
 #both of these can be determined by extracting the dinucleotide motifs for the given reference coordinates for canonical motifs
+
+#input format:
+#read_name, chrom, start(1-based), end, strand_of_alignment, CIGAR, is_uniqe_alignment(1/0)
 jx_file=$1
 
 #for faster sorting
