@@ -2926,6 +2926,11 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 bool unique_aln = ((bw_unique_min_qual == 0 && rec->core.qual >= 10) || 
                                     (bw_unique_min_qual > 0 && rec->core.qual >= bw_unique_min_qual));
                 bool paired = (c->flag & BAM_FPAIRED) != 0;
+                const uint8_t *s = bam_aux_get(rec, "XS");
+                char real_strand = (c->flag & 16)!=0?'1':'0';
+                if(s) {
+                    real_strand = bam_aux2A(s);
+                }
                 int32_t tlen_orig = tlen;
                 int32_t mtid = c->mtid;
                 if(tid != mtid)
@@ -2946,7 +2951,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                         if(jx % 2 == 0)
                             ix = sprintf(all_jx_str, "%s\t%s\t%d\t", qname, hdr->target_name[tid], coord+1);
                         else {
-                            ix += sprintf(all_jx_str+ix, "%d\t%d\t%s\t%d\n", coord, (c->flag & 16) != 0, cigar_str, unique_aln);
+                            //ix += sprintf(all_jx_str+ix, "%d\t%d\t%s\t%d\n", coord, (c->flag & 16) != 0, cigar_str, unique_aln);
+                            ix += sprintf(all_jx_str+ix, "%d\t%c\t%s\t%d\n", coord, real_strand, cigar_str, unique_aln);
                             fprintf(all_jxs_file, "%s", all_jx_str);
                         }
                     }
@@ -2956,7 +2962,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 if(extract_junctions && (sz >= 4 || (paired && sz >= 2))) {
                     jx_str = new char[jx_str_sz];
                     //coordinates are 1-based chromosome
-                    int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    //int ix = sprintf(jx_str, "%s\t%d\t%d\t%d\t%s\t", hdr->target_name[tid], refpos+1, (c->flag & 16) != 0, tlen_orig, cigar_str);
+                    int ix = sprintf(jx_str, "%s\t%d\t%c\t%d\t%s\t", hdr->target_name[tid], refpos+1, real_strand, tlen_orig, cigar_str);
                     for(int jx = 0; jx < sz; jx++) {
                         uint32_t coord = refpos + (*cl)[jx];
                         if(jx % 2 == 0) {
