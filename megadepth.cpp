@@ -2729,14 +2729,14 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                                 all_auc += print_array<int32_t>(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                                 if(unique) {
                                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                                    unique_auc += print_array<int32_t>(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                                    unique_auc += print_array<int32_t>(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region, nullptr, nullptr, nullptr, afp, afpz, window_size, op);
                                 }
                             }
                             else {
                                 all_auc += print_array<uint32_t>(cov_prefix, hdr->target_name[ptid], ptid, coverages.get(), chr_size, false, bwfp, cov_fh, dont_output_coverage, no_region, gcov_fh, cidx, chrms_in_cidx, afp, afpz, window_size, op);
                                 if(unique) {
                                     sprintf(cov_prefix, "ucov\t%d", ptid);
-                                    unique_auc += print_array<uint32_t>(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                                    unique_auc += print_array<uint32_t>(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region, nullptr, nullptr, nullptr, afp, afpz, window_size, op);
                                 }
                             }
                         }
@@ -3095,9 +3095,9 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 if(unique) {
                     sprintf(cov_prefix, "ucov\t%d", ptid);
                     if(no_region)
-                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, (int32_t*) unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region, nullptr, nullptr, nullptr, afp, afpz, window_size, op);
                     else
-                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region);
+                        unique_auc += print_array(cov_prefix, hdr->target_name[ptid], ptid, unique_coverages.get(), chr_size, false, ubwfp, cov_fh, dont_output_coverage, no_region, nullptr, nullptr, nullptr, afp, afpz, window_size, op);
                 }
             }
             if(sum_annotation && annotations->find(hdr->target_name[ptid]) != annotations->end()) {
@@ -3174,6 +3174,8 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
     }
     if(gzip && uafpz) {
         sprintf(temp_afn, "%s.unique.tsv.gz", prefix);
+        if(window_size > 0)
+            sprintf(temp_afn, "%s.unique_window.tsv.gz", prefix);
         bgzf_close(uafpz);
         if(tbx_index_build(temp_afn, min_shift, &tconf) != 0) {
             fprintf(stderr,"Error dumping BGZF index for annotation coverage (unique alignments), skipping\n");
