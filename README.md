@@ -287,6 +287,7 @@ Output format:
 | 7      | Is unique alignment? (0:no, 1:yes; needed for counting unique split read support)     |
 
 \*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
+However, if the BAM includes the `XS:A` tag for certain alignment records the strand here will be `+` or `-` taken from that tag and then indicates the true strand of source transcript based on if canonical splicing info is available.
 
 This output can be further processed by the script, `junctions/process_jx_output.sh` to get a merged set of junctions with unique and multi-mapping counts, compatible with STAR's `SJ.out` junction file (sans the last column which is left blank, but would be maximum anchor length per junction if coming from STAR).
 
@@ -328,6 +329,7 @@ Output is tab separated with 6-12 fields (the last 6 fields are for a 2nd mate i
 \*optional, output if a 2nd mate is present and has the required number of junctions.
 
 \*\*This is the strand of the alignment, not necessarily the strand of the junction, that has to be determined by the dinucleotide motifs at the coordinates given.
+However, if the BAM includes the `XS:A` tag for certain alignment records the strand here will be `+` or `-` taken from that tag and then indicates the true strand of source transcript based on if canonical splicing info is available.
 
 If you get a core dump when running on longer reads (e.g. BAM's produced by PacBio/Oxford Nanopore sequencing), or something like this abort message:
 ```*** Error in `megadepth': free(): invalid next size (normal): 0x0000000001d30780 ***```
