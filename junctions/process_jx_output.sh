@@ -7,7 +7,7 @@ set -x -o pipefail -o errexit -o nounset
 #both of these can be determined by extracting the dinucleotide motifs for the given reference coordinates for canonical motifs
 
 #input format:
-#read_name, chrom, start(1-based), end, strand_of_alignment, CIGAR, is_uniqe_alignment(1/0)
+#read_name, chrom, start(1-based), end, strand_of_alignment (or actual strand if XS:A tag present), CIGAR, is_uniqe_alignment(1/0)
 jx_file=$1
 
 #for faster sorting
@@ -17,4 +17,5 @@ export LC_ALL=C
 #this determines maximum_spliced_alignment_overhang via STAR's method as described here (last post by Dobin):
 #https://groups.google.com/g/rna-star/c/XN0cWBxVFcM/m/ywcUg_s3CQAJ
 #for now, we leave blank the last column from STAR, which is the maximum of the min anchors for each junction, this requires more info than megadepth emits at this time (2021/01)
-sort -k2,2 -k3,3n -k4,4n -k1,1 -u $jx_file | cut -f 1,2-4,6,7 | perl -ne 'chomp; ($qname,$c,$s,$e,$cigar,$is_unique)=split(/\t/,$_); if($pc) { if($s == $ps && $e == $pe) { if($is_unique == 1) { $ucnt++; } else { $cnt++; } next; } else { print "$pc\t$ps\t$pe\t0\t0\t0\t$ucnt\t$cnt\t\n"; }} $ucnt=0; $cnt=0; if($is_unique == 1) { $ucnt=1; } else { $cnt=1; } $pc=$c; $ps=$s; $pe=$e; END { if($pc) { print "$pc\t$ps\t$pe\t0\t0\t0\t$ucnt\t$cnt\t\n"; }}' > ${jx_file}.sjout
+#sort -k2,2 -k3,3n -k4,4n -k1,1 -u $jx_file | cut -f 1,2-4,6,7 | perl -ne 'chomp; ($qname,$c,$s,$e,$cigar,$is_unique)=split(/\t/,$_); if($pc) { if($s == $ps && $e == $pe) { if($is_unique == 1) { $ucnt++; } else { $cnt++; } next; } else { print "$pc\t$ps\t$pe\t0\t0\t0\t$ucnt\t$cnt\t\n"; }} $ucnt=0; $cnt=0; if($is_unique == 1) { $ucnt=1; } else { $cnt=1; } $pc=$c; $ps=$s; $pe=$e; END { if($pc) { print "$pc\t$ps\t$pe\t0\t0\t0\t$ucnt\t$cnt\t\n"; }}' > ${jx_file}.sjout
+sort -k2,2 -k3,3n -k4,4n -k1,1 -u $jx_file | perl -ne 'chomp; ($qname,$c,$s,$e,$orient,$cigar,$is_unique)=split(/\t/,$_); if($pc) { if($s == $ps && $e == $pe && $o eq $po) { if($is_unique == 1) { $ucnt++; } else { $cnt++; } next; } else { print "$pc\t$ps\t$pe\t$po\t0\t0\t$ucnt\t$cnt\t\n"; }} $ucnt=0; $cnt=0; if($is_unique == 1) { $ucnt=1; } else { $cnt=1; } $pc=$c; $ps=$s; $pe=$e; $po=0; if($orient ne "0" && $orient ne "1") { $po=$orient eq "+"?1:2; } END { if($pc) { print "$pc\t$ps\t$pe\t$po\t0\t0\t$ucnt\t$cnt\t\n"; }}' > ${jx_file}.sjout
