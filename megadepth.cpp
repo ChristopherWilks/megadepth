@@ -1890,31 +1890,26 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                         switch(op) {
                             case csum:
                             case cmean:
-                                /*for(k = first_k; k < last_k; k++)
-                                    sum += iter->intervals->value[j];*/
                                 sum += (iter->intervals->value[j]*(last_k - first_k));
                                 break;
                             case cmin:
-                                /*for(k = first_k; k < last_k; k++)
-                                    min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;*/
                                 min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
                                 break;
                             case cmax:
-                                /*for(k = first_k; k < last_k; k++)
-                                    max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;*/
                                 max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
                                 break;
                         }
 
                         //move start up
-                        if(k < end)
-                            start = k;
+                        if(last_k < end)
+                            start = last_k;
                         //break out if we've hit the end of this annotation interval
-                        if(k >= end)
+                        if(last_k >= end)
                             break;
                     }
                 }
                 last_j = j;
+                //TODO determine why this slowed this code 1000x slower!
                 if(last_j == num_intervals)
                     last_j--;
                 if(op == csum)
