@@ -1798,7 +1798,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 
 using chr2bool = hashset<std::string>;
 template <typename T>
-static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
+static int process_bigwig(const strlist* chrm_order, const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
     if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(errfp, "Error in bwInit, exiting\n");
@@ -1820,24 +1820,20 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
     blocksPerIteration = 4000000;
     //blocksPerIteration = 1;
     bwOverlapIterator_t *iter = nullptr;
+    //bwOverlappingIntervals_t *inter = NULL;
     //for certain modes we only want to process BW intervals once
     std::vector<bool> intervals_seen(STARTING_NUM_INTERVALS,false);
     //loop through all the chromosomes in the BW
-    for(tid = 0; tid < fp->cl->nKeys; tid++)
+    //for(tid = 0; tid < fp->cl->nKeys; tid++)
+    //for(hashmap<std::string, std::vector<T*>>::iterator ita = amap->begin(); ita != amap.end(); ++ita)
+    long num_annotations_processed = 0;
+    for(auto const chrom : *chrm_order) 
     {
+        if(!chrom)
+            continue;
+        std::vector<T*>& annotations = (*amap)[chrom];
         //only process the chromosome if it's in the annotation
-        if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
-            iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
-            if(!iter->data)
-            {
-                fprintf(errfp, "WARNING: no interval data for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
-                continue;
-            }
-            uint32_t num_intervals = iter->intervals->l;
-            if(num_intervals == 0) {
-                fprintf(errfp, "WARNING: 0 intervals for chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
-                continue;
-            }
+        /*if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
             if(op == csum) {
                 if(num_intervals > intervals_seen.size())
                     intervals_seen.resize(num_intervals, false);
@@ -1846,7 +1842,9 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             }
             uint32_t istart = iter->intervals->start[0];
             uint32_t iend = iter->intervals->end[num_intervals-1];
-            std::vector<T*>& annotations = amap->operator[](fp->cl->chrom[tid]);
+            std::vector<T*>& annotations = amap->operator[](fp->cl->chrom[tid]);*/
+            uint32_t istart = -1;
+            uint32_t iend = -1;
             long z, j, k;
             long last_j = 0;
             long asz = annotations.size();
@@ -1854,15 +1852,17 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
             //if running in multithreaded mode, want to store the values locally
             //but also don't want to reallocate for every new bigwig file, so
             //we allocate once per thread per chromosome
-            if(store_local) {
-                if(store_local->find(fp->cl->chrom[tid]) == store_local->end())
+            /*if(store_local) {
+                if(store_local->find(chrom) == store_local->end())
                     local_vals = new double[asz];
                 else
-                    local_vals = (*store_local)[fp->cl->chrom[tid]];
+                    //local_vals = (*store_local)[fp->cl->chrom[tid]];
+                    local_vals = (*store_local)[chrom];
                 std::fill(local_vals, local_vals + asz, 0.);
-            }
+            }*/
             //loop through annotation intervals as outer loop
-            for(z = 0; z < asz; z++) {
+            for(z = 0; z < asz; z++) 
+            {
                 const auto &az = annotations[z];
                 double sum = 0;
                 double min = MAX_INT;
@@ -1870,11 +1870,26 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                 T start = az[0];
                 T ostart = start;
                 T end = az[1];
+                //iter = bwGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
+                //iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
+                iter = bwOverlappingIntervalsIterator(fp, chrom, start, end, blocksPerIteration);
+                if(!iter->data)
+                {
+                    //fprintf(errfp, "WARNING: no interval data for region %s:%d-%d in %s as BigWig file, skipping\n", fp->cl->chrom[tid], start, end, fn);
+                    fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                    continue;
+                }
+                uint32_t num_intervals = iter->intervals->l;
+                if(num_intervals == 0) {
+                    //fprintf(errfp, "WARNING: 0 intervals for region on chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                    continue;
+                }
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
-                while(start < iter->intervals->start[last_j] && last_j > 0)
-                    last_j--;
-                for(j = last_j; j < num_intervals; j++)
+                //while(start < iter->intervals->start[last_j] && last_j > 0)
+                //    last_j--;
+                //for(j = last_j; j < num_intervals; j++)
+                for(j = 0; j < num_intervals; j++)
                 {
                     istart = iter->intervals->start[j];
                     iend = iter->intervals->end[j];
@@ -1908,10 +1923,10 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                             break;
                     }
                 }
-                last_j = j;
+                /*last_j = j;
                 //TODO determine why this slowed this code 1000x slower!
                 if(last_j == num_intervals)
-                    last_j--;
+                    last_j--;*/
                 if(op == csum)
                     (*annotated_auc) += sum;
                 //0-based start
@@ -1938,12 +1953,17 @@ static int process_bigwig(const char* fn, double* annotated_auc, annotation_map_
                     local_vals[z] = value;
                 else
                     az[keep_order_idx] = value;
+                num_annotations_processed++;
+                if(num_annotations_processed % 1000 == 0)
+                    fprintf(stderr,"processed %u annotations\n",num_annotations_processed);
             }
-            annotation_chrs_seen->insert(fp->cl->chrom[tid]);
+            //annotation_chrs_seen->insert(fp->cl->chrom[tid]);
+            annotation_chrs_seen->insert(chrom);
             if(store_local)
-                (*store_local)[fp->cl->chrom[tid]] = local_vals;
+                //(*store_local)[fp->cl->chrom[tid]] = local_vals;
+                (*store_local)[chrom] = local_vals;
             bwIteratorDestroy(iter);
-        }
+            //bwDestroyOverlappingIntervals(iter);
     }
 
     bwClose(fp);
@@ -2085,7 +2105,7 @@ void process_bigwig_worker(strvec& bwfns, annotation_map_t<T>* annotations, strl
         chr2bool annotation_chrs_seen;
         double annotated_auc = 0.0;
 
-        int ret = process_bigwig(bwfn, &annotated_auc, annotations, &annotation_chrs_seen, afp, keep_order_idx, op = op, errfp = errfp, &store_local);
+        int ret = process_bigwig(NULL,bwfn, &annotated_auc, annotations, &annotation_chrs_seen, afp, keep_order_idx, op = op, errfp = errfp, &store_local);
         if(ret != 0) {
             fprintf(errfp,"FAILED to process bigwig %s\n", bwfn);
             if(afp)
@@ -2215,7 +2235,7 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
         return 0;
     }
     //don't have a list of BigWigs, so just process the single one
-    int ret = process_bigwig(bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
+    int ret = process_bigwig(chrm_order, bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
     //if we wanted to keep the chromosome order of the annotation output matching the input BED file
     if(keep_order)
         output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, nullptr, nullptr, op);
