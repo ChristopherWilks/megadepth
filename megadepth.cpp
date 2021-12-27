@@ -1876,7 +1876,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 if(!iter->data)
                 {
                     //fprintf(errfp, "WARNING: no interval data for region %s:%d-%d in %s as BigWig file, skipping\n", fp->cl->chrom[tid], start, end, fn);
-                    fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                    fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", chrom, fn);
                     continue;
                 }
                 uint32_t num_intervals = iter->intervals->l;
@@ -1893,6 +1893,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 {
                     istart = iter->intervals->start[j];
                     iend = iter->intervals->end[j];
+                    //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", fp->cl->chrom[tid], istart, iend, value[j]);
                     //is our start and/or end overlapping?
                     if((start >= istart && start < iend) ||
                             (end > istart && end <= iend) ||
@@ -1914,6 +1915,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                                 max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
                                 break;
                         }
+                        //fprintf(errfp, "MATCHING\t%s\t%d\t%d\t%.0f\t%d\t%d\t%.0f\t%0.f\t%0.f\n", chrom, istart, iend, iter->intervals->value[j],first_k,last_k,sum,start,end);
 
                         //move start up
                         if(last_k < end)
@@ -1954,8 +1956,8 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 else
                     az[keep_order_idx] = value;
                 num_annotations_processed++;
-                if(num_annotations_processed % 1000 == 0)
-                    fprintf(stderr,"processed %u annotations\n",num_annotations_processed);
+                /*if(num_annotations_processed % 1000 == 0)
+                    fprintf(stderr,"processed %u annotations\n",num_annotations_processed);*/
             }
             //annotation_chrs_seen->insert(fp->cl->chrom[tid]);
             annotation_chrs_seen->insert(chrom);
