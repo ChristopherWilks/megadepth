@@ -1925,6 +1925,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                             break;
                     }
                 }
+                bwIteratorDestroy(iter);
                 /*last_j = j;
                 //TODO determine why this slowed this code 1000x slower!
                 if(last_j == num_intervals)
@@ -1964,7 +1965,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
             if(store_local)
                 //(*store_local)[fp->cl->chrom[tid]] = local_vals;
                 (*store_local)[chrom] = local_vals;
-            bwIteratorDestroy(iter);
+            //bwIteratorDestroy(iter);
             //bwDestroyOverlappingIntervals(iter);
     }
 
