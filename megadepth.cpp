@@ -1873,59 +1873,64 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 //iter = bwGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
                 //iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
                 iter = bwOverlappingIntervalsIterator(fp, chrom, start, end, blocksPerIteration);
-                if(!iter->data)
+                while(iter && iter->data)
                 {
-                    //fprintf(errfp, "WARNING: no interval data for region %s:%d-%d in %s as BigWig file, skipping\n", fp->cl->chrom[tid], start, end, fn);
-                    fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", chrom, fn);
-                    continue;
-                }
-                uint32_t num_intervals = iter->intervals->l;
-                if(num_intervals == 0) {
-                    //fprintf(errfp, "WARNING: 0 intervals for region on chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
-                    continue;
-                }
-                //find the first BW interval starting *before* our annotation interval
-                //this is if we have overlapping/out-of-order intervals in the annotation
-                //while(start < iter->intervals->start[last_j] && last_j > 0)
-                //    last_j--;
-                //for(j = last_j; j < num_intervals; j++)
-                for(j = 0; j < num_intervals; j++)
-                {
-                    istart = iter->intervals->start[j];
-                    iend = iter->intervals->end[j];
-                    //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", fp->cl->chrom[tid], istart, iend, value[j]);
-                    //is our start and/or end overlapping?
-                    if((start >= istart && start < iend) ||
-                            (end > istart && end <= iend) ||
-                            (start < istart && end > iend))
+                    /*if(!iter->data)
                     {
-                        long first_k = start < istart ? istart : start;
-                        long last_k = end > iend ? iend : end;
-                        //stat mode
-                        //avoid having if's in the inner loops as much as possible
-                        switch(op) {
-                            case csum:
-                            case cmean:
-                                sum += (iter->intervals->value[j]*(last_k - first_k));
-                                break;
-                            case cmin:
-                                min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
-                                break;
-                            case cmax:
-                                max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
+                        fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", chrom, fn);
+                        continue;
+                    }*/
+                    uint32_t num_intervals = iter->intervals->l;
+                    if(num_intervals == 0) {
+                        //fprintf(errfp, "WARNING: 0 intervals for region on chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
+                        iter = bwIteratorNext(iter);
+                        continue;
+                    }
+                    //find the first BW interval starting *before* our annotation interval
+                    //this is if we have overlapping/out-of-order intervals in the annotation
+                    //while(start < iter->intervals->start[last_j] && last_j > 0)
+                    //    last_j--;
+                    //for(j = last_j; j < num_intervals; j++)
+                    for(j = 0; j < num_intervals; j++)
+                    {
+                        istart = iter->intervals->start[j];
+                        iend = iter->intervals->end[j];
+                        //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", fp->cl->chrom[tid], istart, iend, value[j]);
+                        //is our start and/or end overlapping?
+                        if((start >= istart && start < iend) ||
+                                (end > istart && end <= iend) ||
+                                (start < istart && end > iend))
+                        {
+                            long first_k = start < istart ? istart : start;
+                            long last_k = end > iend ? iend : end;
+                            //stat mode
+                            //avoid having if's in the inner loops as much as possible
+                            switch(op) {
+                                case csum:
+                                case cmean:
+                                    sum += (iter->intervals->value[j]*(last_k - first_k));
+                                    break;
+                                case cmin:
+                                    min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
+                                    break;
+                                case cmax:
+                                    max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
+                                    break;
+                            }
+                            //fprintf(errfp, "MATCHING\t%s\t%d\t%d\t%.0f\t%d\t%d\t%.0f\t%0.f\t%0.f\n", chrom, istart, iend, iter->intervals->value[j],first_k,last_k,sum,start,end);
+
+                            //move start up
+                            if(last_k < end)
+                                start = last_k;
+                            //break out if we've hit the end of this annotation interval
+                            if(last_k >= end)
                                 break;
                         }
-                        //fprintf(errfp, "MATCHING\t%s\t%d\t%d\t%.0f\t%d\t%d\t%.0f\t%0.f\t%0.f\n", chrom, istart, iend, iter->intervals->value[j],first_k,last_k,sum,start,end);
-
-                        //move start up
-                        if(last_k < end)
-                            start = last_k;
-                        //break out if we've hit the end of this annotation interval
-                        if(last_k >= end)
-                            break;
                     }
+                    iter = bwIteratorNext(iter);
                 }
-                bwIteratorDestroy(iter);
+                if(iter)
+                    bwIteratorDestroy(iter);
                 /*last_j = j;
                 //TODO determine why this slowed this code 1000x slower!
                 if(last_j == num_intervals)
