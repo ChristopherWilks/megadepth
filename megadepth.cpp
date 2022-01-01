@@ -1618,8 +1618,8 @@ static const int process_region_line(char* line, const char* delim, annotation_m
         bool update_coords = true;
         if(*pchrm) {
             save_previous_coords = true;
-            if(chrm == *pchrm && end - *pend < 1000) {
-                *pend=end;
+            if(strcmp(chrm,*pchrm) == 0 && start - *pend < 1000) {
+                *pend = end;
                 update_coords = false;
                 save_previous_coords = false;
             }
@@ -1652,7 +1652,6 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
     int err = 0;
     long pstart = -1;
     long pend = -1;
-    //char *pchrm = new char[256];
     char *pchrm = nullptr;
     while(bytes_read != -1) {
         err = process_region_line(line, "\t", amap, chrm_order, keep_order, acmap, &pchrm, &pstart, &pend);
@@ -1839,7 +1838,7 @@ static int process_bigwig_for_total_auc(const char* fn, double* all_auc, FILE* e
 
 using chr2bool = hashset<std::string>;
 template <typename T>
-static int process_bigwig(const strlist* chrm_order, const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr) {
+static int process_bigwig(const strlist* chrm_order, const char* fn, double* annotated_auc, annotation_map_t<T>* amap, chr2bool* annotation_chrs_seen, FILE* afp, int keep_order_idx = -1, Op op = csum, FILE* errfp = stderr, str2dblist* store_local=nullptr, annotation_map_t<long>* acmap = nullptr) {
     //in part lifted from https://github.com/dpryan79/libBigWig/blob/master/test/testIterator.c
     if(bwInit(BW_READ_BUFFER) != 0) {
         fprintf(errfp, "Error in bwInit, exiting\n");
@@ -2190,7 +2189,7 @@ typedef hashmap<std::string, uint8_t*> str2str;
 static const uint64_t frag_lens_mask = 0x00000000FFFFFFFF;
 static const int FRAG_LEN_BITLEN = 32;
 template <typename T>
-int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations) {
+int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_fh, int nthreads, bool keep_order, bool has_annotation, FILE* afp, BGZF* afpz, annotation_map_t<T>* annotations, chr2bool* annotation_chrs_seen, const char* prefix, bool sum_annotation, strlist* chrm_order, FILE* auc_file, uint64_t num_annotations, annotation_map_t<long>* acmap) {
     //only calculate AUC across either the BAM or the BigWig, but could be restricting to an annotation as well
     int err = 0;
     bool LOAD_BALANCE = false;
@@ -2279,7 +2278,7 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
         return 0;
     }
     //don't have a list of BigWigs, so just process the single one
-    int ret = process_bigwig(chrm_order, bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op=op);
+    int ret = process_bigwig(chrm_order, bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op, stderr, nullptr, acmap);
     //if we wanted to keep the chromosome order of the annotation output matching the input BED file
     if(keep_order)
         output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, nullptr, nullptr, op);
@@ -3323,11 +3322,9 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
             std::cerr << annotations_collapsed.size() << " chromosomes for annotated regions read, collapsed\n";
-            //for(hashmap<std::string, std::vector<long*>>::iterator ita = annotations_collapsed.begin(); ita != annotations_collapsed.end(); ++ita) {
-            //for(auto ita = annotations_collapsed.begin(); ita != annotations_collapsed.end(); ++ita) {
             long num_sizes=0;
             for(auto ita: annotations_collapsed) {
-                std::cerr << ita.second.size() << " " << ita.first << "\n";
+                //std::cerr << ita.second.size() << " " << ita.first << "\n";
                 num_sizes+=ita.second.size();
             }
             fprintf(stderr,"total number of annotations in collapsed: %u\n",num_sizes);
@@ -3370,7 +3367,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     if(is_bam)
         return go_bam(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations, window_size = window_size);
     else
-        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations);
+        return go_bw(fname_arg, argc, argv, op, bam_fh, nthreads, keep_order, has_annotation, afp, afpz, &annotations, &annotation_chrs_seen, prefix, sum_annotation, &chrm_order, auc_file, num_annotations, &annotations_collapsed);
 }
 
 int get_file_format_extension(const char* fname) {
