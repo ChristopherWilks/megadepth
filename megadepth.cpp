@@ -1581,7 +1581,7 @@ using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
-static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, annotation_map_t<long>* acmap, char** pchrm, long* pstart, long* pend) {
     char* tok = strtok(line, delim);
     int i = 0;
     char* chrm = nullptr;
@@ -1613,18 +1613,49 @@ static const int process_region_line(char* line, const char* delim, annotation_m
         it = amap->emplace(chrm, std::vector<T*>()).first;
     }
     it->second.push_back(coords);
+    if(acmap) {
+        bool save_previous_coords = false;
+        bool update_coords = true;
+        if(*pchrm) {
+            save_previous_coords = true;
+            if(chrm == *pchrm && end - *pend < 1000) {
+                *pend=end;
+                update_coords = false;
+                save_previous_coords = false;
+            }
+        }
+        if(save_previous_coords) {
+            long* coords0 = new long[2];
+            coords0[0] = *pstart;
+            coords0[1] = *pend;
+            auto it = acmap->find(*pchrm);
+            if(it == acmap->end()) {
+                it = acmap->emplace(chrm, std::vector<long*>()).first;
+            }
+            it->second.push_back(coords0);
+        }
+        if(update_coords) {
+            *pchrm = chrm;
+            *pstart = start;
+            *pend = end;
+        }
+    }
     return ret;
 }
 
 template <typename T>
-static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations) {
+static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations, annotation_map_t<long>* acmap) {
     char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
     size_t length = LINE_BUFFER_LENGTH;
     assert(fin);
     ssize_t bytes_read = getline(&line, &length, fin);
     int err = 0;
+    long pstart = -1;
+    long pend = -1;
+    //char *pchrm = new char[256];
+    char *pchrm = nullptr;
     while(bytes_read != -1) {
-        err = process_region_line(line, "\t", amap, chrm_order, keep_order);
+        err = process_region_line(line, "\t", amap, chrm_order, keep_order, acmap, &pchrm, &pstart, &pend);
         if(err) {
             std::cerr << "Error: " << err << " in process_region_line.\n";
             break;
@@ -1875,11 +1906,6 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 iter = bwOverlappingIntervalsIterator(fp, chrom, start, end, blocksPerIteration);
                 while(iter && iter->data)
                 {
-                    /*if(!iter->data)
-                    {
-                        fprintf(errfp, "WARNING: no interval data for region on %s %s as BigWig file, skipping\n", chrom, fn);
-                        continue;
-                    }*/
                     uint32_t num_intervals = iter->intervals->l;
                     if(num_intervals == 0) {
                         //fprintf(errfp, "WARNING: 0 intervals for region on chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
@@ -3247,6 +3273,7 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
     strlist chrm_order;
     FILE* afp = nullptr;
     annotation_map_t<T> annotations;
+    annotation_map_t<long> annotations_collapsed;
     bool sum_annotation = false;
     chr2bool annotation_chrs_seen;
     //setup hashmap to store BED file of *non-overlapping* annotated intervals to sum coverage across
@@ -3278,10 +3305,14 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
                         "bad argument to --annotation: either the path \"%s\" doesn't exist or cannot be read, terminating\n", afile);
                 return -1;
             }
-            err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations);
+            if(is_bam)
+                err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, nullptr);
+            else
+                err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, &annotations_collapsed);
             fclose(afp);
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
+            std::cerr << annotations_collapsed.size() << " chromosomes for annotated regions read, collapsed\n";
             sprintf(output_prefix, "annotation");
             sum_annotation = true;
         }
