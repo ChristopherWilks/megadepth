@@ -1630,7 +1630,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
             coords0[1] = *pend;
             auto it = acmap->find(*pchrm);
             if(it == acmap->end()) {
-                it = acmap->emplace(chrm, std::vector<long*>()).first;
+                it = acmap->emplace(*pchrm, std::vector<long*>()).first;
             }
             it->second.push_back(coords0);
         }
@@ -1663,6 +1663,16 @@ static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* 
         assert(err==0);
         (*num_annotations)++;
         bytes_read = getline(&line, &length, fin);
+    }
+    if(pchrm) {
+        long* coords0 = new long[2];
+        coords0[0] = pstart;
+        coords0[1] = pend;
+        auto it = acmap->find(pchrm);
+        if(it == acmap->end()) {
+            it = acmap->emplace(pchrm, std::vector<long*>()).first;
+        }
+        it->second.push_back(coords0);
     }
     std::free(line);
     std::cerr << "building whole annotation region map done\n";
@@ -3313,6 +3323,14 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
             std::cerr << annotations_collapsed.size() << " chromosomes for annotated regions read, collapsed\n";
+            //for(hashmap<std::string, std::vector<long*>>::iterator ita = annotations_collapsed.begin(); ita != annotations_collapsed.end(); ++ita) {
+            //for(auto ita = annotations_collapsed.begin(); ita != annotations_collapsed.end(); ++ita) {
+            long num_sizes=0;
+            for(auto ita: annotations_collapsed) {
+                std::cerr << ita.second.size() << " " << ita.first << "\n";
+                num_sizes+=ita.second.size();
+            }
+            fprintf(stderr,"total number of annotations in collapsed: %u\n",num_sizes);
             sprintf(output_prefix, "annotation");
             sum_annotation = true;
         }
