@@ -2312,6 +2312,9 @@ int go_bw(const char* bw_arg, int argc, const char** argv, Op op, htsFile *bam_f
     }
     //don't have a list of BigWigs, so just process the single one
     int ret = process_bigwig(chrm_order, bw_arg, &annotated_total_auc, annotations, annotation_chrs_seen, afp, keep_order_idx, op, stderr, nullptr, acmap);
+    if(ret != 0) {
+        return ret;
+    }
     //if we wanted to keep the chromosome order of the annotation output matching the input BED file
     if(keep_order)
         output_all_coverage_ordered_by_BED(chrm_order, annotations, afp, afpz, nullptr, nullptr, op);
