@@ -103,6 +103,7 @@ const uint32_t default_BW_READ_BUFFER = 1<<30;
 uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 
 bool SUMS_ONLY = false;
+bool SORTED_NON_OVERLAPPING = false;
 
 typedef std::vector<std::string> strvec;
 typedef hashmap<std::string, uint64_t> mate2len;
@@ -167,6 +168,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed>                      Only output the regions in this BED applying the argument to --op to them.\n"
     "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
     "  --sums-only                             Discard coordinates from output of summarized regions\n"
+    "  --sorted-non-overlapping                Performance improvement *if* BED file passed to --annotation is 1) sorted by sort -k1,1 -k2,2n -k3,3n *and* 2) no two interals on the same chromosome overlap (default is false/off)\n"
     "  --bwbuffer <1GB[default]>               Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
     "                                           Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
@@ -1867,146 +1869,177 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
     //for(tid = 0; tid < fp->cl->nKeys; tid++)
     //for(hashmap<std::string, std::vector<T*>>::iterator ita = amap->begin(); ita != amap.end(); ++ita)
     long num_annotations_processed = 0;
+    std::vector<long*>* collapsed = nullptr;
+    long collapsed_idx = 0;
+    long collapsed_size = -1;
+    long* collapsed_coords = nullptr;
+    //chrm_order matches what's loaded into amap (same order)
     for(auto const chrom : *chrm_order) 
     {
         if(!chrom)
             continue;
         std::vector<T*>& annotations = (*amap)[chrom];
-        //only process the chromosome if it's in the annotation
-        /*if(amap->find(fp->cl->chrom[tid]) != amap->end()) {
-            if(op == csum) {
-                if(num_intervals > intervals_seen.size())
-                    intervals_seen.resize(num_intervals, false);
-                for(unsigned int i = 0; i < intervals_seen.size(); i++)
-                    intervals_seen[i] = false;
+        if(acmap && SORTED_NON_OVERLAPPING) {
+            //for a new chromosome, set all collapsed variables back to their initialized state
+            collapsed_idx = 0;
+            collapsed = &((*acmap)[chrom]);
+            collapsed_size = collapsed->size();
+            if(iter)
+                bwIteratorDestroy(iter);
+            iter = nullptr;
+        }
+        uint32_t istart = -1;
+        uint32_t iend = -1;
+        long z, j, k;
+        long last_j = 0;
+        long asz = annotations.size();
+        double* local_vals;
+        //loop through annotation intervals as outer loop
+        for(z = 0; z < asz; z++) 
+        {
+            const auto &az = annotations[z];
+            double sum = 0;
+            double min = MAX_INT;
+            double max = 0;
+            T start = az[0];
+            T ostart = start;
+            T end = az[1];
+            //1st check to see if we're still within the collapsed interval
+            //if the BED file is 1) sorted and 2) we're using collapsed intervals to speed up
+            if(acmap && SORTED_NON_OVERLAPPING) {
+                //1st: get current collapsed interval
+                collapsed_coords = (*collapsed)[collapsed_idx];
+                //2nd: check to see if our current annotation interval with contained within the collapased interval
+                while(!(start >= collapsed_coords[0] && end <= collapsed_coords[1])) {
+                    //2nd A: only do this if we need to move collapsed intervals on the same chromosome
+                    if(iter)
+                        bwIteratorDestroy(iter);
+                    iter = nullptr;
+                    collapsed_idx++;
+                    if(collapsed_idx >= collapsed_size) {
+                        fprintf(stderr,"ERROR ran out of collapsed intervals, this shouldn't happen, terminating early!\n");
+                        if(iter)
+                            bwIteratorDestroy(iter);
+                        return 1;
+                    }
+                    //2nd B: updated collapsed interval for next check
+                    collapsed_coords = (*collapsed)[collapsed_idx];
+                }
+                //3rd: check to see if we need to do the interval query again, based on:
+                //if 1) a new chromosome OR 2) a new collapsed interval
+                if(!iter) {
+                    iter = bwOverlappingIntervalsIterator(fp, chrom, collapsed_coords[0], collapsed_coords[1], blocksPerIteration);
+                    last_j = 0;
+                }
             }
-            uint32_t istart = iter->intervals->start[0];
-            uint32_t iend = iter->intervals->end[num_intervals-1];
-            std::vector<T*>& annotations = amap->operator[](fp->cl->chrom[tid]);*/
-            uint32_t istart = -1;
-            uint32_t iend = -1;
-            long z, j, k;
-            long last_j = 0;
-            long asz = annotations.size();
-            double* local_vals;
-            //if running in multithreaded mode, want to store the values locally
-            //but also don't want to reallocate for every new bigwig file, so
-            //we allocate once per thread per chromosome
-            /*if(store_local) {
-                if(store_local->find(chrom) == store_local->end())
-                    local_vals = new double[asz];
-                else
-                    //local_vals = (*store_local)[fp->cl->chrom[tid]];
-                    local_vals = (*store_local)[chrom];
-                std::fill(local_vals, local_vals + asz, 0.);
-            }*/
-            //loop through annotation intervals as outer loop
-            for(z = 0; z < asz; z++) 
-            {
-                const auto &az = annotations[z];
-                double sum = 0;
-                double min = MAX_INT;
-                double max = 0;
-                T start = az[0];
-                T ostart = start;
-                T end = az[1];
+            //potentially slower way but works for any and all BED files (unsorted, and/or overlapping)
+            else {
                 //iter = bwGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
                 //iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
                 iter = bwOverlappingIntervalsIterator(fp, chrom, start, end, blocksPerIteration);
-                while(iter && iter->data)
+                last_j = 0;
+            }
+            bool annotation_done = false;
+            while(!annotation_done && iter && iter->data)
+            {
+                uint32_t num_intervals = iter->intervals->l;
+                if(num_intervals == 0) {
+                    iter = bwIteratorNext(iter);
+                    continue;
+                }
+                //find the first BW interval starting *before* our annotation interval
+                //this is if we have overlapping/out-of-order intervals in the annotation
+                //while(start < iter->intervals->start[last_j] && last_j > 0)
+                //    last_j--;
+                //for(j = 0; j < num_intervals; j++)
+                for(j = last_j; j < num_intervals; j++)
                 {
-                    uint32_t num_intervals = iter->intervals->l;
-                    if(num_intervals == 0) {
-                        //fprintf(errfp, "WARNING: 0 intervals for region on chromosome %s in %s as BigWig file, skipping\n", fp->cl->chrom[tid], fn);
-                        iter = bwIteratorNext(iter);
-                        continue;
-                    }
-                    //find the first BW interval starting *before* our annotation interval
-                    //this is if we have overlapping/out-of-order intervals in the annotation
-                    //while(start < iter->intervals->start[last_j] && last_j > 0)
-                    //    last_j--;
-                    //for(j = last_j; j < num_intervals; j++)
-                    for(j = 0; j < num_intervals; j++)
+                    istart = iter->intervals->start[j];
+                    iend = iter->intervals->end[j];
+                    //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", chrom, istart, iend, iter->intervals->value[j]);
+                    //fprintf(stdout, "annotation interval: %s\t%.0f\t%0.f ", chrom, start, end);
+                    //fprintf(stdout, "checking interval %s\t%u\t%u\t%.3f\t%ld\n", chrom, istart, iend, iter->intervals->value[j],j);
+                    //fprintf(stdout, "annotation interval: %s\t%ld\t%ld checking interval %d\t%d\t%.3f j: %ld\n", chrom, start, end, istart, iend, iter->intervals->value[j], j);
+                    //is our start and/or end overlapping?
+                    if((start >= istart && start < iend) ||
+                            (end > istart && end <= iend) ||
+                            (start < istart && end > iend))
                     {
-                        istart = iter->intervals->start[j];
-                        iend = iter->intervals->end[j];
-                        //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", fp->cl->chrom[tid], istart, iend, value[j]);
-                        //is our start and/or end overlapping?
-                        if((start >= istart && start < iend) ||
-                                (end > istart && end <= iend) ||
-                                (start < istart && end > iend))
-                        {
-                            long first_k = start < istart ? istart : start;
-                            long last_k = end > iend ? iend : end;
-                            //stat mode
-                            //avoid having if's in the inner loops as much as possible
-                            switch(op) {
-                                case csum:
-                                case cmean:
-                                    sum += (iter->intervals->value[j]*(last_k - first_k));
-                                    break;
-                                case cmin:
-                                    min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
-                                    break;
-                                case cmax:
-                                    max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
-                                    break;
-                            }
-                            //fprintf(errfp, "MATCHING\t%s\t%d\t%d\t%.0f\t%d\t%d\t%.0f\t%0.f\t%0.f\n", chrom, istart, iend, iter->intervals->value[j],first_k,last_k,sum,start,end);
-
-                            //move start up
-                            if(last_k < end)
-                                start = last_k;
-                            //break out if we've hit the end of this annotation interval
-                            if(last_k >= end)
+                        double first_k = start < istart ? istart : start;
+                        double last_k = end > iend ? iend : end;
+                        //stat mode
+                        //avoid having if's in the inner loops as much as possible
+                        switch(op) {
+                            case csum:
+                            case cmean:
+                                sum += (iter->intervals->value[j]*(last_k - first_k));
+                                break;
+                            case cmin:
+                                min = iter->intervals->value[j] < min ? iter->intervals->value[j]:min;
+                                break;
+                            case cmax:
+                                max = iter->intervals->value[j] > max ? iter->intervals->value[j]:max;
                                 break;
                         }
+                        //fprintf(errfp, "MATCHING\t%s\t%d\t%d\t%.0f\t%d\t%d\t%.0f\t%0.f\t%0.f\n", chrom, istart, iend, iter->intervals->value[j],first_k,last_k,sum,start,end);
+
+                        //move start up
+                        if(last_k < end)
+                            start = last_k;
+                        //break out if we've hit the end of this annotation interval
+                        if(last_k >= end) {
+                            annotation_done = true;
+                            last_j = j;
+                            break;
+                        }
                     }
+                }
+                if(!annotation_done)
                     iter = bwIteratorNext(iter);
-                }
-                if(iter)
-                    bwIteratorDestroy(iter);
-                /*last_j = j;
-                //TODO determine why this slowed this code 1000x slower!
-                if(last_j == num_intervals)
-                    last_j--;*/
-                if(op == csum)
-                    (*annotated_auc) += sum;
-                //0-based start
-                double annot_length = end - ostart;
-                T value = sum;
-                switch(op) {
-                    case cmean:
-                        value = (double)sum / (double)annot_length;
-                        break;
-                    case cmin:
-                        value = min;
-                        break;
-                    case cmax:
-                        value = max;
-                        break;
-                    case csum:; // do nothing
-                }
-                //not trying to keep the order in the BED file, just print them as we find them
-                if(keep_order_idx == -1) {
-                    int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
-                    (*outputFunc)(afp, buf, buf_len);
-                }
-                else if(store_local)
-                    local_vals[z] = value;
-                else
-                    az[keep_order_idx] = value;
-                num_annotations_processed++;
-                /*if(num_annotations_processed % 1000 == 0)
-                    fprintf(stderr,"processed %u annotations\n",num_annotations_processed);*/
             }
-            //annotation_chrs_seen->insert(fp->cl->chrom[tid]);
-            annotation_chrs_seen->insert(chrom);
-            if(store_local)
-                //(*store_local)[fp->cl->chrom[tid]] = local_vals;
-                (*store_local)[chrom] = local_vals;
-            //bwIteratorDestroy(iter);
-            //bwDestroyOverlappingIntervals(iter);
+            /*if(iter)
+                bwIteratorDestroy(iter);*/
+            /*last_j = j;
+            //TODO determine why this slowed this code 1000x slower!
+            if(last_j == num_intervals)
+                last_j--;*/
+            if(op == csum)
+                (*annotated_auc) += sum;
+            //0-based start
+            double annot_length = end - ostart;
+            T value = sum;
+            switch(op) {
+                case cmean:
+                    value = (double)sum / (double)annot_length;
+                    break;
+                case cmin:
+                    value = min;
+                    break;
+                case cmax:
+                    value = max;
+                    break;
+                case csum:; // do nothing
+            }
+            //not trying to keep the order in the BED file, just print them as we find them
+            if(keep_order_idx == -1) {
+                int buf_len = (*printPtr)(buf, fp->cl->chrom[tid], (long) ostart, (long) end, value, nullptr, 0);
+                (*outputFunc)(afp, buf, buf_len);
+            }
+            else if(store_local)
+                local_vals[z] = value;
+            else
+                az[keep_order_idx] = value;
+            num_annotations_processed++;
+            /*if(num_annotations_processed % 1000 == 0)
+                fprintf(stderr,"processed %u annotations\n",num_annotations_processed);*/
+        }
+        //annotation_chrs_seen->insert(fp->cl->chrom[tid]);
+        annotation_chrs_seen->insert(chrom);
+        if(store_local)
+            //(*store_local)[fp->cl->chrom[tid]] = local_vals;
+            (*store_local)[chrom] = local_vals;
+        //bwIteratorDestroy(iter);
+        //bwDestroyOverlappingIntervals(iter);
     }
 
     bwClose(fp);
@@ -3402,6 +3435,9 @@ int main(int argc, const char** argv) {
     }
     if(has_option(argv, argv+argc, "--sums-only")) {
         SUMS_ONLY = true;
+    }
+    if(has_option(argv, argv+argc, "--sorted-non-overlapping")) {
+        SORTED_NON_OVERLAPPING = true;
     }
     const char *fname_arg = get_positional_n(argv, argv+argc, 0);
     if(!fname_arg) {
