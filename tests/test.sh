@@ -100,9 +100,14 @@ diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
 diff test.bw.all_overlap_types.test_output.bed tests/bw.all_overlap_types.test_output.bed
 
 #test faster mode with collapsed intervals in BigWig annotation processing
-./megadepth tests/TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.bg.gz.chr1.60379.62229.bw --annotation tests/chr1.61863.62160.bed --sorted-non-overlapping --no-annotation-stdout --prefix TCGA_BLCA_A13J_vs_chr1.61863.62160
-
+./megadepth tests/TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.bg.gz.chr1.60379.62229.bw --annotation tests/chr1.61863.62160.bed --no-annotation-stdout --prefix TCGA_BLCA_A13J_vs_chr1.61863.62160
 diff TCGA_BLCA_A13J_vs_chr1.61863.62160.annotation.tsv tests/TCGA_BLCA_A13J_vs_chr1.61863.62160.annotation.tsv
+
+#test that we're catching out of order chromosomes
+set +e
+output=$(./megadepth tests/TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.bg.gz.chr1.60379.62229.bw --annotation tests/chr1.61863.62160.bad_chrm_order.bed 2>&1)
+set -e
+fgrep "terminating early" <(echo "$output")
 
 #clean up any previous test files
 rm -f test*tsv test*auc bw2* test3* test2* t3.* long_reads.bam.jxs.tsv test_run_out *null*.unique.tsv test.*.bw auc.single test.bam.mean test.cram.coverage.tsv test_cram_run_out test.cram.coverage.tsv.summed test.bw.all_overlap_types.test_output.bed TCGA_BLCA_A13J_vs_chr1.61863.62160.annotation.tsv

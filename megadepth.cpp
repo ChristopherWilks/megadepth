@@ -1584,7 +1584,7 @@ using annotation_map_t = hashmap<std::string, std::vector<T*>>;
 typedef std::vector<char*> strlist;
 //about 3x faster than the sstring/string::getline version
 template <typename T>
-static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, annotation_map_t<long>* acmap, long* ppstart, char** pchrm, long* pstart, long* pend) {
+static const int process_region_line(char* line, const char* delim, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, annotation_map_t<long>* acmap, str2int* chrms_done, char** ppchrm, long* ppstart, char** pchrm, long* pstart, long* pend) {
     char* tok = strtok(line, delim);
     int i = 0;
     char* chrm = nullptr;
@@ -1610,6 +1610,16 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     coords[0] = start;
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
+    //check that the annotation chromosomes are contiguous
+    if(*ppchrm && strcmp(*ppchrm, chrm) != 0) {
+        auto it = chrms_done->find(chrm);
+        if(it != chrms_done->end()) {
+            fprintf(stderr,"annotation BED file contains out of order chromosome(s): %s, terminating early\n",chrm);
+            return -1;
+        }
+        chrms_done->emplace(*ppchrm, 1);
+    }
+    *ppchrm = chrm;
     auto it = amap->find(chrm);
     if(it == amap->end()) {
         chrm_order->push_back(chrm);
@@ -1654,19 +1664,23 @@ static const int process_region_line(char* line, const char* delim, annotation_m
 
 template <typename T>
 static const int read_annotation(FILE* fin, annotation_map_t<T>* amap, strlist* chrm_order, bool keep_order, uint64_t* num_annotations, annotation_map_t<long>* acmap) {
-    char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
-    size_t length = LINE_BUFFER_LENGTH;
-    assert(fin);
-    ssize_t bytes_read = getline(&line, &length, fin);
-    int err = 0;
+    //track chromosomes to detect out of order annotation file
+    str2int chrms_done;
+    char *ppchrm = nullptr;
     //track the previous start position for checking for unsorted annotation input
     long ppstart = -1;
     //track collapsed annotation interval to reduce calls to BW's R-index if sorted annotation input
     long pstart = -1;
     long pend = -1;
     char *pchrm = nullptr;
+    
+    char *line = (char *)std::malloc(LINE_BUFFER_LENGTH);
+    size_t length = LINE_BUFFER_LENGTH;
+    assert(fin);
+    ssize_t bytes_read = getline(&line, &length, fin);
+    int err = 0;
     while(bytes_read != -1) {
-        err = process_region_line(line, "\t", amap, chrm_order, keep_order, acmap, &ppstart, &pchrm, &pstart, &pend);
+        err = process_region_line(line, "\t", amap, chrm_order, keep_order, acmap, &chrms_done, &ppchrm, &ppstart, &pchrm, &pstart, &pend);
         if(err) {
             std::cerr << "Error: " << err << " in process_region_line.\n";
             break;
@@ -3331,6 +3345,8 @@ int go(const char* fname_arg, int argc, const char** argv, Op op, htsFile *bam_f
                 err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, nullptr);
             else
                 err = read_annotation(afp, &annotations, &chrm_order, keep_order, &num_annotations, &annotations_collapsed);
+            if(err != 0)
+                return err;
             fclose(afp);
             assert(!annotations.empty());
             std::cerr << annotations.size() << " chromosomes for annotated regions read\n";
