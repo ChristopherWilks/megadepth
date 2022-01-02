@@ -100,7 +100,7 @@ diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
 diff test.bw.all_overlap_types.test_output.bed tests/bw.all_overlap_types.test_output.bed
 
 #test faster mode with collapsed intervals in BigWig annotation processing
-./megadepth tests/TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.bg.gz.chr1.60379.62229.bw --annotation tests/mdnew.TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.chr1.61863.62160.bed.annotation.tsv --sorted-non-overlapping --no-annotation-stdout --prefix TCGA_BLCA_A13J_vs_chr1.61863.62160
+./megadepth tests/TCGA_BLCA_A13J.vcf.gz_cg_cov5.bw.bg.gz.chr1.60379.62229.bw --annotation tests/chr1.61863.62160.bed --sorted-non-overlapping --no-annotation-stdout --prefix TCGA_BLCA_A13J_vs_chr1.61863.62160
 
 diff TCGA_BLCA_A13J_vs_chr1.61863.62160.annotation.tsv tests/TCGA_BLCA_A13J_vs_chr1.61863.62160.annotation.tsv
 
