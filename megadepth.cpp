@@ -1891,7 +1891,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
         uint32_t istart = -1;
         uint32_t iend = -1;
         long z, j, k;
-        long last_j = 0;
+        //long last_j = 0;
         long asz = annotations.size();
         double* local_vals;
         //loop through annotation intervals as outer loop
@@ -1929,7 +1929,7 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 //if 1) a new chromosome OR 2) a new collapsed interval
                 if(!iter) {
                     iter = bwOverlappingIntervalsIterator(fp, chrom, collapsed_coords[0], collapsed_coords[1], blocksPerIteration);
-                    last_j = 0;
+                    //last_j = 0;
                 }
             }
             //potentially slower way but works for any and all BED files (unsorted, and/or overlapping)
@@ -1937,27 +1937,39 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                 //iter = bwGetOverlappingIntervals(fp, fp->cl->chrom[tid], start, end);
                 //iter = bwOverlappingIntervalsIterator(fp, fp->cl->chrom[tid], 0, fp->cl->len[tid], blocksPerIteration);
                 iter = bwOverlappingIntervalsIterator(fp, chrom, start, end, blocksPerIteration);
-                last_j = 0;
+                //last_j = 0;
             }
+            if(!iter)
+                break;
+
+            /*if(acmap && SORTED_NON_OVERLAPPING) {
+               fprintf(stdout, "annotation interval: %s\t%.0f\t%0.f\t%ld\t%ld\t%ld\n", chrom, start, end, collapsed_idx, collapsed_coords[0], collapsed_coords[1]);
+            }*/
             bool annotation_done = false;
             while(!annotation_done && iter && iter->data)
             {
                 uint32_t num_intervals = iter->intervals->l;
-                if(num_intervals == 0) {
+                if(num_intervals == 0)
+                {
                     iter = bwIteratorNext(iter);
+                    //last_j = 0;
                     continue;
                 }
                 //find the first BW interval starting *before* our annotation interval
                 //this is if we have overlapping/out-of-order intervals in the annotation
-                //while(start < iter->intervals->start[last_j] && last_j > 0)
-                //    last_j--;
+                /*while(last_j > 0 && start < iter->intervals->start[last_j])
+                    last_j--;*/
                 //for(j = 0; j < num_intervals; j++)
-                for(j = last_j; j < num_intervals; j++)
+                for(j = 0; j < num_intervals; j++)
                 {
                     istart = iter->intervals->start[j];
                     iend = iter->intervals->end[j];
+                    //this annotation interval is too early, skip the whole rest of the set from the BigWig
+                    if(end < istart) {
+                        annotation_done = true;
+                        break;
+                    }
                     //fprintf(errfp, "checking interval %c\t%d\t%d\t%.3f\n", chrom, istart, iend, iter->intervals->value[j]);
-                    //fprintf(stdout, "annotation interval: %s\t%.0f\t%0.f ", chrom, start, end);
                     //fprintf(stdout, "checking interval %s\t%u\t%u\t%.3f\t%ld\n", chrom, istart, iend, iter->intervals->value[j],j);
                     //fprintf(stdout, "annotation interval: %s\t%ld\t%ld checking interval %d\t%d\t%.3f j: %ld\n", chrom, start, end, istart, iend, iter->intervals->value[j], j);
                     //is our start and/or end overlapping?
@@ -1989,13 +2001,16 @@ static int process_bigwig(const strlist* chrm_order, const char* fn, double* ann
                         //break out if we've hit the end of this annotation interval
                         if(last_k >= end) {
                             annotation_done = true;
-                            last_j = j;
                             break;
                         }
                     }
                 }
+                //last_j = (j < num_intervals ? j : num_intervals - 1);
                 if(!annotation_done)
+                {
+                    //last_j = 0;
                     iter = bwIteratorNext(iter);
+                }
             }
             /*if(iter)
                 bwIteratorDestroy(iter);*/
