@@ -169,7 +169,8 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --annotation <bed>                      Only output the regions in this BED applying the argument to --op to them.\n"
     "  --op <sum[default], mean, min, max>     Statistic to run on the intervals provided by --annotation\n"
     "  --sums-only                             Discard coordinates from output of summarized regions\n"
-    "  --unsorted                              There's a performance improvement *if* BED file passed to --annotation is 1) sorted by sort -k1,1 -k2,2n (default is to assume sorted and check for unsorted positions, if unsorted positions are found, will fall back to slower version)\n"
+    "  --distance (2200[default])              Number of base pairs between end of last annotation and start of new to consider in the same BigWig query window (a form of binning) for performance.  This determines the number of times the BigWig index is queried.\n"
+    "  --unsorted (off[default])               There's a performance improvement *if* BED file passed to --annotation is 1) sorted by sort -k1,1 -k2,2n (default is to assume sorted and check for unsorted positions, if unsorted positions are found, will fall back to slower version)\n"
     "  --bwbuffer <1GB[default]>               Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
     "                                          Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
@@ -3434,6 +3435,10 @@ int main(int argc, const char** argv) {
     }
     if(has_option(argv, argv+argc, "--sums-only")) {
         SUMS_ONLY = true;
+    }
+    if(has_option(argv, argv+argc, "--distance")) {
+        const char* opstr = *(get_option(argv, argv+argc, "--distance"));
+        COLLAPSED_ANNOTATION_MAX_DISTANCE = atol(opstr);
     }
     if(has_option(argv, argv+argc, "--unsorted")) {
         SORTED_ANNOTATIONS = false;
