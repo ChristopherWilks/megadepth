@@ -171,7 +171,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --sums-only                             Discard coordinates from output of summarized regions\n"
     "  --unsorted                              There's a performance improvement *if* BED file passed to --annotation is 1) sorted by sort -k1,1 -k2,2n (default is to assume sorted and check for unsorted positions, if unsorted positions are found, will fall back to slower version)\n"
     "  --bwbuffer <1GB[default]>               Size of buffer for reading BigWig files, critical to use a large value (~1GB) for remote BigWigs.\n"
-    "                                           Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
+    "                                          Default setting should be fine for most uses, but raise if very slow on a remote BigWig.\n"
     "\n"
     "\n"
     "BAM Input:\n"
@@ -1611,13 +1611,16 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
     //check that the annotation chromosomes are contiguous
-    if(*ppchrm && strcmp(*ppchrm, chrm) != 0) {
+    if(SORTED_ANNOTATIONS && *ppchrm && strcmp(*ppchrm, chrm) != 0) {
         auto it = chrms_done->find(chrm);
         if(it != chrms_done->end()) {
-            fprintf(stderr,"annotation BED file contains out of order chromosome(s): %s, terminating early\n",chrm);
-            return -1;
+            //fprintf(stderr,"annotation BED file contains out of order chromosome(s): %s, terminating early\n",chrm);
+            //return -1;
+            fprintf(stderr,"annotation BED file contains out of order chromosomes(s): %s\t%ld\t%ld\n, falling back to slower matching\nFor potentially faster performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth\n",chrm,start,end);
+            SORTED_ANNOTATIONS = false;
         }
-        chrms_done->emplace(*ppchrm, 1);
+        else
+            chrms_done->emplace(*ppchrm, 1);
     }
     *ppchrm = chrm;
     auto it = amap->find(chrm);
@@ -1629,7 +1632,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     //check for unsorted BED file, if unsorted, fall back to slower version:
     //don't use collapsed annotations to reduce index calls (i.e. acmap)
     if(SORTED_ANNOTATIONS && start < *ppstart) {
-        fprintf(stderr,"unsorted position: %s\t%ld\t%ld\n, falling back to slower matching\nFor faster performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth\n");
+        fprintf(stderr,"unsorted interval: %s\t%ld\t%ld\n, falling back to slower matching\nFor potentially faster performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth.\n",chrm,start,end);
         SORTED_ANNOTATIONS = false;
     }
     if(SORTED_ANNOTATIONS && acmap) {
