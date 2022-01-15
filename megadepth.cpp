@@ -1612,12 +1612,13 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     coords[1] = end;
     std::fill(coords + 2, coords + alen, 0);
     //check that the annotation chromosomes are contiguous
+    //basically the same as the check htslib/tabix does when indexing to ensure sorted contiguous chromosomes
     if(SORTED_ANNOTATIONS && *ppchrm && strcmp(*ppchrm, chrm) != 0) {
         auto it = chrms_done->find(chrm);
         if(it != chrms_done->end()) {
             //fprintf(stderr,"annotation BED file contains out of order chromosome(s): %s, terminating early\n",chrm);
             //return -1;
-            fprintf(stderr,"annotation BED file contains out of order chromosomes(s): %s\t%ld\t%ld\n, falling back to slower matching\nFor potentially faster performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth\n",chrm,start,end);
+            fprintf(stderr,"annotation BED file contains out of order chromosomes(s): %s\t%ld\t%ld\n, falling back to slower BigWig matching (doesn't affect BAM processing)\nFor potentially faster performance in BigWig reading, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth\n",chrm,start,end);
             SORTED_ANNOTATIONS = false;
         }
         else
@@ -1632,8 +1633,9 @@ static const int process_region_line(char* line, const char* delim, annotation_m
     it->second.push_back(coords);
     //check for unsorted BED file, if unsorted, fall back to slower version:
     //don't use collapsed annotations to reduce index calls (i.e. acmap)
+    //basically the same as the check htslib/tabix does when indexing to ensure sorted positions within a chromosome
     if(SORTED_ANNOTATIONS && start < *ppstart) {
-        fprintf(stderr,"unsorted interval: %s\t%ld\t%ld\n, falling back to slower matching\nFor potentially faster performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth.\n",chrm,start,end);
+        fprintf(stderr,"unsorted interval: %s\t%ld\t%ld\n, falling back to slower matching (doesn't affect BAM processing)\nFor potentially faster BigWig reading performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth.\n",chrm,start,end);
         SORTED_ANNOTATIONS = false;
     }
     if(SORTED_ANNOTATIONS && acmap) {
