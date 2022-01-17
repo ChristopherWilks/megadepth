@@ -1638,6 +1638,7 @@ static const int process_region_line(char* line, const char* delim, annotation_m
         fprintf(stderr,"unsorted interval: %s\t%ld\t%ld\n, falling back to slower matching (doesn't affect BAM processing)\nFor potentially faster BigWig reading performance, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth.\n",chrm,start,end);
         SORTED_ANNOTATIONS = false;
     }
+    *ppstart = start;
     if(SORTED_ANNOTATIONS && acmap) {
         bool save_previous_coords = false;
         bool update_coords = true;
