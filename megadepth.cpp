@@ -1621,14 +1621,17 @@ static const int process_region_line(char* line, const char* delim, annotation_m
             fprintf(stderr,"annotation BED file contains out of order chromosomes(s): %s\t%ld\t%ld\n, falling back to slower BigWig matching (doesn't affect BAM processing)\nFor potentially faster performance in BigWig reading, please sort your argument to --annotations (BED) file via sort -k1,1 -k2,2n and re-run megadepth\n",chrm,start,end);
             SORTED_ANNOTATIONS = false;
         }
-        else
+        else {
             chrms_done->emplace(*ppchrm, 1);
+            *ppstart = -1;
+        }
     }
     *ppchrm = chrm;
     auto it = amap->find(chrm);
     if(it == amap->end()) {
         chrm_order->push_back(chrm);
         it = amap->emplace(chrm, std::vector<T*>()).first;
+        *ppstart = -1;
     }
     it->second.push_back(coords);
     //check for unsorted BED file, if unsorted, fall back to slower version:
