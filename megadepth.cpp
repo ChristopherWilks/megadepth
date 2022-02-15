@@ -104,7 +104,7 @@ uint32_t BW_READ_BUFFER = default_BW_READ_BUFFER;
 
 bool SUMS_ONLY = false;
 bool SORTED_ANNOTATIONS = true;
-int COLLAPSED_ANNOTATION_MAX_DISTANCE = 1000;
+int COLLAPSED_ANNOTATION_MAX_DISTANCE = 2200;
 
 typedef std::vector<std::string> strvec;
 typedef hashmap<std::string, uint64_t> mate2len;
