@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -xe
+#set for now due to problems with remove BAM access over SSL/TLS
+disable_remote_bam=1
 
 static=$1
 
-if [[ -z $static ]]; then
-    time ./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out 2>&1
+if [[ -z $static && -z $disable_remote_bam ]]; then
+    time ./megadepth http://snaptron.cs.jhu.edu/data/temp/test.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out 2>&1
 
-    time ./megadepth http://stingray.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
+    time ./megadepth http://snaptron.cs.jhu.edu/data/temp/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
 else
     time ./megadepth tests/test_noprefix.bam --prefix test.bam --threads 4 --bigwig --auc --min-unique-qual 10 --annotation tests/test_exons.bed --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out 2>&1
     time ./megadepth tests/test.cram --prefix test.cram --threads 4 --coverage --no-coverage-stdout --auc --min-unique-qual 10 --annotation 400 --frag-dist --alts --include-softclip --only-polya --read-ends --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 > test_cram_run_out 2>&1
@@ -84,7 +86,7 @@ diff tests/long_reads.bam.jxs.tsv long_reads.bam.jxs.tsv
 
 #test bigwig2sum on remote BW
 if [[ -z $static ]]; then
-    time ./megadepth http://stingray.cs.jhu.edu/data/temp/megadepth.test.bam.all.bw --op mean --annotation tests/testbw2.bed --prefix bw2.remote.mean --no-annotation-stdout >> test_run_out 2>&1
+    time ./megadepth http://snaptron.cs.jhu.edu/data/temp/megadepth.test.bam.all.bw --op mean --annotation tests/testbw2.bed --prefix bw2.remote.mean --no-annotation-stdout >> test_run_out 2>&1
     diff bw2.remote.mean.annotation.tsv tests/testbw2.bed.mean
 fi
 
@@ -92,8 +94,13 @@ fi
 time ./megadepth test.bam.all.bw --sums-only --annotation tests/testbw2.bed --prefix test.bam.bw2 > test.bam.bw2.annotation.tsv
 diff test.bam.bw2.annotation.tsv <(cut -f 4 tests/testbw2.bed.out.tsv)
 
-./megadepth http://stingray.cs.jhu.edu/data/temp/test.bam --prefix test.bam.names --threads 4 --alts --write-names --include-softclip --only-polya --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out2 2>&1
-diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
+if [[ -z $disable_remote_bam ]]; then
+    ./megadepth http://snaptron.cs.jhu.edu/data/temp/test.bam --prefix test.bam.names --threads 4 --alts --write-names --include-softclip --only-polya --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out2 2>&1
+    diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
+else 
+    ./megadepth tests/test_noprefix.bam --prefix test.bam.names --threads 4 --alts --write-names --include-softclip --only-polya --test-polya --no-annotation-stdout --no-auc-stdout --filter-out 260 --add-chr-prefix human > test_run_out2 2>&1
+    diff test.bam.names.alts.tsv tests/test.bam.names.alts.tsv
+fi
 
 #test multiple overlap types for BigWig annotation processing
 ./megadepth tests/bw.all_overlap_types.test_input.bw --annotation tests/gh_bug_9.bed --auc > test.bw.all_overlap_types.test_output.bed
