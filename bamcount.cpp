@@ -91,6 +91,7 @@ static const char USAGE[] = "BAM and BigWig utility.\n"
     "  --double-count       Allow overlapping ends of PE read to count twice toward\n"
     "                       coverage\n"
     "  --num-bases          Report total sum of bases in alignments processed (that pass filters)\n"
+    "  --just-auc           Only report just AUC even if --annotation and --coverage are submitted\n"
     "\n"
     "Other outputs:\n"
     "  --read-ends          Print counts of read starts/ends, if --min-unique-qual is set\n"
@@ -1086,6 +1087,7 @@ int main(int argc, const char** argv) {
     uint64_t unique_annotated_auc = 0;
     FILE* auc_file = nullptr;
     bool just_auc = false;
+    bool really_just_auc = has_option(argv, argv+argc, "--just-auc");
     bool keep_order = true;
     strlist chrm_order;
     if(has_option(argv, argv+argc, "--coverage") || has_option(argv, argv+argc, "--auc")) {
@@ -1131,11 +1133,11 @@ int main(int argc, const char** argv) {
             err = read_annotation(afp, &annotations, &chrm_order, keep_order);
             fclose(afp);
             afp = nullptr;
-            if(!just_auc) {
+            if(!really_just_auc) {
                 char afn[1024];
                 sprintf(afn, "%s.all.tsv", prefix);
                 afp = fopen(afn, "w");
-                if(ubwfp) {
+                if(unique) {
                     sprintf(afn, "%s.unique.tsv", prefix);
                     uafp = fopen(afn, "w");
                 }
@@ -1296,10 +1298,10 @@ int main(int argc, const char** argv) {
                         //if we also want to sum coverage across a user supplied file of annotated regions
                         int keep_order_idx = keep_order?2:-1;
                         if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
-                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                            sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, really_just_auc, keep_order_idx);
                             if(unique) {
                                 keep_order_idx = keep_order?3:-1;
-                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                                sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, really_just_auc, keep_order_idx);
                             }
                             if(!keep_order)
                                 annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
@@ -1491,7 +1493,7 @@ int main(int argc, const char** argv) {
                 cl->clear();
             }
         }
-    }
+    } //end of while
     delete(cigar_str);
     if(jxs_file) {
         fclose(jxs_file);
@@ -1511,10 +1513,10 @@ int main(int argc, const char** argv) {
             }
             if(sum_annotation && annotations.find(hdr->target_name[ptid]) != annotations.end()) {
                 int keep_order_idx = keep_order?2:-1;
-                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, just_auc, keep_order_idx);
+                sum_annotations(coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], afp, &annotated_auc, really_just_auc, keep_order_idx);
                 if(unique) {
                     keep_order_idx = keep_order?3:-1;
-                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, just_auc, keep_order_idx);
+                    sum_annotations(unique_coverages, annotations[hdr->target_name[ptid]], hdr->target_len[ptid], hdr->target_name[ptid], uafp, &unique_annotated_auc, really_just_auc, keep_order_idx);
                 }
                 if(!keep_order)
                     annotation_chrs_seen[strdup(hdr->target_name[ptid])] = true;
@@ -1543,9 +1545,9 @@ int main(int argc, const char** argv) {
             if(unique)
                 fprintf(auc_file, "UNIQUE_READS_ANNOTATED_BASES\t%" PRIu64 "\n", unique_annotated_auc);
         }
-        delete[] coverages;
-        if(unique)
-            delete[] unique_coverages;
+        //delete[] coverages;
+        //if(unique)
+        //    delete[] unique_coverages;
         if(sum_annotation && !keep_order) {
             output_missing_annotations(&annotations, &annotation_chrs_seen, afp);
             if(unique)
@@ -1566,8 +1568,8 @@ int main(int argc, const char** argv) {
                     fprintf(refp,"%s\t%d\t%d\n", hdr->target_name[ptid], j+1, ends[j]);
             }
         }
-        delete[] starts;
-        delete[] ends;
+        //delete[] starts;
+        //delete[] ends;
     }
     if(bwfp) {
         bwClose(bwfp);
