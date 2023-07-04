@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 2.6)
 project(bamcount)
 set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DBAMCOUNT_VERSION=\"\\\"`cat ../VERSION`\\\"\"")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DBAMCOUNT_VERSION=\"\\\"`cat VERSION`\\\"\"")
 add_executable(bamcount-dyn bamcount.cpp)
 add_executable(bamcount bamcount.cpp)
-include_directories(htslib libBigWig)
+include_directories(htslib libBigWig zlib)
 
 find_package(Threads REQUIRED)
 if(THREADS_HAVE_PTHREAD_ARG)
@@ -19,4 +19,4 @@ if(CMAKE_THREAD_LIBS_INIT)
 endif()
 
 target_link_libraries(bamcount-dyn z hts BigWig -L${CMAKE_SOURCE_DIR}/htslib -L${CMAKE_SOURCE_DIR}/libBigWig)
-target_link_libraries(bamcount z ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a)
+target_link_libraries(bamcount ${CMAKE_SOURCE_DIR}/htslib/libhts.a ${CMAKE_SOURCE_DIR}/libBigWig/libBigWig.a ${CMAKE_SOURCE_DIR}/zlib/libz.a)
