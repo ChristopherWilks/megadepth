@@ -33,6 +33,16 @@ Additionally, when using `--annotation`, `--op <op>` can be used to change the m
 * BAMs, `<op>` can be `sum` (default) or `mean`
 * BigWigs, `<op>` can be `sum` (default), `mean`, `min`, or `max`
 
+Default output of `--coverage` and `--auc` is to standard out (console/terminal).
+To change that, you can either add `--gzip` which fill force the output of `--coverage` into a gzipped file (takes a little longer).
+You can also individually specify that `--coverage` and/or `--auc` should *not* be writtent to standard out but to a file the same as the other options (i.e. using `--prefix`'s argument as the prefix of the output file with `coverage.tsv` and/or `auc.tsv` as the suffix):
+
+When running on certain BAMs/annotation BED files, you may see a warning (one or more of them) like this:
+```[W::hts_reglist_create] Region 'SIRV7:4095-4179' specifies an unknown reference name. Continue anyway```
+where `'SIRV7:4095-4179'` could be any region that's not present in the BAM but is present in the annotation BED file.
+
+This can be ignored if you know that the BAM file doesn't contain those contigs/chromosomes (in this case the SIRV7 contig is not present in the BAM file being run).
+
 ## BigWig Processing
 ```
 megadepth /path/to/bigwigfile --annotation <annotated_intervals.bed> --op <operation_over_annotated_intervals>
