@@ -34,8 +34,12 @@ Additionally, when using `--annotation`, `--op <op>` can be used to change the m
 * BigWigs, `<op>` can be `sum` (default), `mean`, `min`, or `max`
 
 Default output of `--coverage` and `--auc` is to standard out (console/terminal).
-To change that, you can either add `--gzip` which fill force the output of `--coverage` into a gzipped file (takes a little longer).
-You can also individually specify that `--coverage` and/or `--auc` should *not* be writtent to standard out but to a file the same as the other options (i.e. using `--prefix`'s argument as the prefix of the output file with `coverage.tsv` and/or `auc.tsv` as the suffix):
+
+To change that, you can either add `--gzip` which fill force the output of `--coverage` into a gzipped file* (takes a little longer) in addition to a BigWig file.
+
+You can also individually specify via `--no-auc-stdout`, `--no-annotation-stdout`, and/or `--no-coverage-stdout` that the output of  `--auc`, `--annotation` and/or `--coverage` should *not* be written to standard out but to a file with the same prefix as the other options (i.e. using `--prefix`'s argument).  In any case, if `--coverage` is specified, BigWig files will be output no matter the other options.
+
+*known bug, this doesn't apply to the `all` base-level coverage case, only to the unique (`--min-unique-qual 10`) case, all base-level coverage will either be output to standard out and/or to a BigWig file, but never to a gzipped file at this point.
 
 When running on certain BAMs/annotation BED files, you may see a warning (one or more of them) like this:
 ```[W::hts_reglist_create] Region 'SIRV7:4095-4179' specifies an unknown reference name. Continue anyway```
