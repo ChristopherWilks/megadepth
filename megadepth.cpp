@@ -1334,7 +1334,13 @@ struct MateInfo {
 
 //typedef hashmap<std::string, uint32_t*> read2len;
 //typedef hashmap<uint32_t, uint32_t*> read2len;
-typedef hashmap<uint32_t, std::vector<MateInfo*>*> read2len;
+// Per-position bucket is keyed by qname instead of being a flat vector.
+// The original scanned the vector linearly (with std::string compares) to
+// find a read's mate and erased from the middle, making the per-position
+// cost quadratic in pileup depth. That is harmless on typical WGS but
+// degrades badly on enriched libraries -- an eccDNA circle junction can
+// have hundreds of thousands of reads starting at one position.
+typedef hashmap<uint32_t, hashmap<std::string, MateInfo*>*> read2len;
 typedef hashmap<std::string, std::vector<Coordinate>> read2overlaps;
 static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                                         uint32_t* unique_coverages, const bool double_count,
@@ -1383,24 +1389,23 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
         //2) we're either the first mate overlapping with the 2nd, or we're the 2nd mate
         //so we could have mate overlap
         if(first_mate_w_overlap || second_mate) {
-            std::vector<MateInfo*>* mate_vec = nullptr;
+            hashmap<std::string, MateInfo*>* mate_vec = nullptr;
             MateInfo* mate_info = nullptr;
             
             auto mit = overlapping_mates->find(refpos_to_hash);
             bool potential_mate_found = mit != overlapping_mates->end();
 
             //if we found a potential mate in the hash based on pos
-            int mvi = 0;
             if(potential_mate_found) {
                 mate_vec = mit->second;
-                for(auto mate : *mate_vec) {
-                    //fprintf(stderr,"name check for refpos %u mrefpos %u: %s vs. %s\n",refpos, mrefpos, tn.c_str(), mate->qname);
-                    if(!mate->erased && mate->qname == tn) {
-                        mate_info = mate;
-                        break;
-                    }
-                    mvi++;
-                }
+                // O(1) lookup, same result as the original linear scan:
+                // the bucket never holds more than one entry per qname
+                // (see the insert below), so there is nothing to
+                // disambiguate and no erased entries to skip -- the
+                // second-mate branch removes the entry outright.
+                auto mate_it = mate_vec->find(tn);
+                if(mate_it != mate_vec->end())
+                    mate_info = mate_it->second;
             }
 
             //first mate in the pair
@@ -1417,10 +1422,15 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 mate_info->erased = false;
                 //if we didn't find a previous vector, create one
                 if(!potential_mate_found) {
-                    mate_vec = new std::vector<MateInfo*>;
+                    mate_vec = new hashmap<std::string, MateInfo*>;
                     overlapping_mates->emplace(mrefpos, mate_vec);
                 }
-                mate_vec->push_back(mate_info);
+                // The lookup above searched this same bucket (refpos_to_hash
+                // is mrefpos unless we are the second mate) and found no
+                // entry for this qname, so the emplace always inserts: no
+                // MateInfo is dropped and num_overlapping_pairs stays in
+                // step with the original push_back.
+                mate_vec->emplace(tn, mate_info);
                 num_overlapping_pairs++;
             }
             //-------Second Mate Check
@@ -1453,7 +1463,7 @@ static const int32_t calculate_coverage(const bam1_t *rec, uint32_t* coverages,
                 mate_info->erased = true;
                 //overlapping_mates->erase(mit);
                 delete mate_info;
-                mate_vec->erase(mate_vec->begin()+mvi);
+                mate_vec->erase(tn);
                 if(mate_vec->size() == 0) {
                     //mate_vec->shrink_to_fit();
                     //std::vector<MateInfo*>().swap(*mate_vec);
@@ -2941,7 +2951,7 @@ int go_bam(const char* bam_arg, int argc, const char** argv, Op op, htsFile *bam
                 bool first_mate_w_overlap = false;
                 bool second_mate = false;
 
-                std::vector<MateInfo*>* mate_vec = nullptr;
+                hashmap<std::string, MateInfo*>* mate_vec = nullptr;
                 MateInfo* mate_info = nullptr;
 
                 std::vector<Coordinate> overlapping_coords;
