@@ -13,8 +13,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-        with:
-            submodules: recursive
+    with:
+      submodules: recursive
         # Install Dependencies
     #from https://github.com/danielecook/seq-collection/blob/master/.github/workflows/build.yml
     - name: Install dependencies (Linux)
