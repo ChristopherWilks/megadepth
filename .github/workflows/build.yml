@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+        with:
+            submodules: recursive
         # Install Dependencies
     #from https://github.com/danielecook/seq-collection/blob/master/.github/workflows/build.yml
     - name: Install dependencies (Linux)

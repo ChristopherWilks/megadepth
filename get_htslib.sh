@@ -35,8 +35,7 @@ if [[ -z $SUBMODULE ]]; then
 fi
 pushd $target_dir
 
-autoheader
-autoconf
+autoreconf --install --force --verbose
 make clean
 
 if [[ "$compiler" == "linux" ]]; then
