@@ -40,10 +40,10 @@ make clean
 
 if [[ "$compiler" == "linux" ]]; then
     if [[ "$platform" == "hbb" ]]; then
-        ./configure --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+        ./configure --host="$(./config.guess)" --enable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
         make libhts.a
     else
-        ./configure --disable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
+        ./configure --host="$(./config.guess)" --disable-libcurl --disable-bz2 --disable-lzma --with-libdeflate
         make
     fi
 else
